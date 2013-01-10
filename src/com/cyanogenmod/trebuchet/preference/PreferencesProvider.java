@@ -55,10 +55,10 @@ public final class PreferencesProvider {
     public static class Interface {
         public static class Homescreen {
             public static int getNumberHomescreens() {
-                return getInt("ui_homescreen_screens", 3);
+                return getInt("ui_homescreen_screens", 5);
             }
             public static int getDefaultHomescreen(int def) {
-                return getInt("ui_homescreen_default_screen", 2);
+                return getInt("ui_homescreen_default_screen", def + 1) - 1;
             }
             public static int getCellCountX(int def) {
                 String[] values = getString("ui_homescreen_grid", "0|" + def).split("\\|");
@@ -103,7 +103,7 @@ public final class PreferencesProvider {
                     return Workspace.TransitionEffect.Standard;
                 }
                 public static boolean getScrollWallpaper() {
-                    return getBoolean("ui_homescreen_scrolling_scroll_wallpaper", true);
+                    return getBoolean("ui_homescreen_scrolling_scroll_wallpaper", false);
                 }
                 public static boolean getWallpaperHack(boolean def) {
                     return getBoolean("ui_homescreen_scrolling_wallpaper_hack", def);
@@ -180,7 +180,7 @@ public final class PreferencesProvider {
                 return getBoolean("ui_dock_enabled", true);
             }
             public static int getNumberPages() {
-                return getInt("ui_dock_pages", 3);
+                return getInt("ui_dock_pages", 1);
             }
             public static int getDefaultPage(int def) {
                 return getInt("ui_dock_default_page", def + 1) - 1;
