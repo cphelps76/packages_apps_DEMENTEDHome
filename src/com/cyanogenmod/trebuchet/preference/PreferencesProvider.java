@@ -55,10 +55,10 @@ public final class PreferencesProvider {
     public static class Interface {
         public static class Homescreen {
             public static int getNumberHomescreens() {
-                return getInt("ui_homescreen_screens", 5);
+                return getInt("ui_homescreen_screens", 3);
             }
             public static int getDefaultHomescreen(int def) {
-                return getInt("ui_homescreen_default_screen", def + 1) - 1;
+                return getInt("ui_homescreen_default_screen", 2;
             }
             public static int getCellCountX(int def) {
                 String[] values = getString("ui_homescreen_grid", "0|" + def).split("\\|");
@@ -180,7 +180,7 @@ public final class PreferencesProvider {
                 return getBoolean("ui_dock_enabled", true);
             }
             public static int getNumberPages() {
-                return getInt("ui_dock_pages", 1);
+                return getInt("ui_dock_pages", 3);
             }
             public static int getDefaultPage(int def) {
                 return getInt("ui_dock_default_page", def + 1) - 1;
@@ -192,7 +192,7 @@ public final class PreferencesProvider {
                 return getInt("ui_dock_icon_scale", def);
             }
             public static boolean getShowDivider() {
-                return getBoolean("ui_dock_divider", true);
+                return getBoolean("ui_dock_divider", false);
             }
         }
 
@@ -202,7 +202,7 @@ public final class PreferencesProvider {
 
         public static class General {
             public static boolean getAutoRotate(boolean def) {
-                return getBoolean("ui_general_orientation", def);
+                return getBoolean("ui_general_orientation", true);
             }
             public static boolean getFullscreenMode() {
                 return getBoolean("ui_general_fullscreen", false);
