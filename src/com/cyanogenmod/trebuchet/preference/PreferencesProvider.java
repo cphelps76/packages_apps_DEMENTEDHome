@@ -58,7 +58,7 @@ public final class PreferencesProvider {
                 return getInt("ui_homescreen_screens", 3);
             }
             public static int getDefaultHomescreen(int def) {
-                return getInt("ui_homescreen_default_screen", 2;
+                return getInt("ui_homescreen_default_screen", 2);
             }
             public static int getCellCountX(int def) {
                 String[] values = getString("ui_homescreen_grid", "0|" + def).split("\\|");
