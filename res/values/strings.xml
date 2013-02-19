@@ -21,7 +21,7 @@
     <!-- General -->
     <skip />
     <!-- Application name -->
-    <string name="application_name" translatable="false">Trebuchet</string>
+    <string name="application_name" translatable="false">DEMENTED Home</string>
     <!-- Application copyright -->
     <string name="application_copyright">Built from Trebuchet</string>
     <!-- Application version -->

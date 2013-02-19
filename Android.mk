@@ -26,7 +26,7 @@ LOCAL_SRC_FILES := $(call all-java-files-under, src) $(call all-renderscript-fil
 LOCAL_PACKAGE_NAME := DEMENTEDHome
 LOCAL_CERTIFICATE := shared
 
-LOCAL_OVERRIDES_PACKAGES := Home Launcher2
+LOCAL_OVERRIDES_PACKAGES := Launcher2
 
 LOCAL_PROGUARD_FLAG_FILES := proguard.flags
 
