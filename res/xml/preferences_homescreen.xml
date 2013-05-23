@@ -18,9 +18,7 @@
     xmlns:launcher="http://schemas.android.com/apk/res/com.android.demented"
     android:key="ui_homescreen"
     android:title="@string/preferences_interface_homescreen_title">
-    <PreferenceCategory
-        android:key="ui_homescreen_general"
-        android:title="@string/preferences_interface_homescreen_general_category">
+    <PreferenceCategory android:title="@string/preferences_interface_homescreen_general_category">
         <com.android.demented.preference.DoubleNumberPickerPreference android:key="ui_homescreen_grid"
             android:title="@string/preferences_interface_homescreen_general_grid_title"
             android:summary="@string/preferences_interface_homescreen_general_grid_summary"
