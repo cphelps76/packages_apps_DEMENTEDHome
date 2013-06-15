@@ -968,7 +968,7 @@ public final class Launcher extends Activity
         }
 
         // Redim the hotseat and statusbar to let some extra size for the item text
-        if (mShowHotseat && !mHideDockIconLabels && !mHotseat.hasVerticalHotseat()) {
+        if (mShowHotseat && !mHideDockIconLabels) {
             Resources res = getResources();
             int bottomMarginWithText = res.getDimensionPixelSize(R.dimen.button_bar_height_with_text);
             // Divider
