@@ -1269,7 +1269,7 @@ public class Launcher extends Activity
     }
 
     protected void startThemeSettings() {
-        Intent settings = new Intent().setClassName(OverviewSettingsPanel.ANDROID_SETTINGS,
+        Intent settings = new Intent().setClassName(OverviewSettingsPanel.ANDROID_THEME_APP,
                 OverviewSettingsPanel.THEME_SETTINGS);
         startActivity(settings);
 

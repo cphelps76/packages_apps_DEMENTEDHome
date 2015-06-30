@@ -16,10 +16,11 @@ import java.util.List;
 
 public class OverviewSettingsPanel {
     public static final String ANDROID_SETTINGS = "com.android.settings";
+    public static final String ANDROID_THEME_APP = "org.cyanogenmod.theme.chooser";
     public static final String ANDROID_PROTECTED_APPS =
             "com.android.settings.applications.ProtectedAppsActivity";
     public static final String THEME_SETTINGS =
-            "com.android.settings.Settings$ThemeSettingsActivity";
+            "org.cyanogenmod.theme.chooser.ChooserActivity";
     public static final int HOME_SETTINGS_POSITION = 0;
     public static final int DRAWER_SETTINGS_POSITION = 1;
 
