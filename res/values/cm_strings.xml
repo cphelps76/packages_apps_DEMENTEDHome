@@ -16,7 +16,7 @@
 -->
 <resources>
     <!-- Application name -->
-    <string name="cm_application_name" translatable="false">Trebuchet</string>
+    <string name="cm_application_name" translatable="false">DEMENTEDHome</string>
     <!-- App version -->
     <string name="application_version" translatable="false">1.0</string>
 
