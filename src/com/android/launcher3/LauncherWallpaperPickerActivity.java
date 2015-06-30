@@ -23,8 +23,4 @@ public class LauncherWallpaperPickerActivity extends WallpaperPickerActivity {
     public void startActivityForResultSafely(Intent intent, int requestCode) {
         Utilities.startActivityForResultSafely(this, intent, requestCode);
     }
-    @Override
-    public boolean enableRotation() {
-        return Utilities.isRotationEnabled(this);
-    }
 }

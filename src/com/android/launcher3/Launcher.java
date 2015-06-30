@@ -212,9 +212,9 @@ public class Launcher extends Activity
             "com.android.launcher.toolbar_voice_search_icon";
 
     private static final String WALLPAPER_PICKER_PACKAGE =
-            "com.android.wallpapercropper";
+            "com.android.launcher3";
     private static final String WALLPAPER_PICKER_ACTIVITY =
-            "com.android.wallpapercropper.WallpaperPickerActivity";
+            "com.android.launcher3.LauncherWallpaperPickerActivity";
 
     public static final String SHOW_WEIGHT_WATCHER = "debug.show_mem";
     public static final boolean SHOW_WEIGHT_WATCHER_DEFAULT = false;
