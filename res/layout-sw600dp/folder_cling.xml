@@ -13,9 +13,9 @@
      See the License for the specific language governing permissions and
      limitations under the License.
 -->
-<com.android.launcher3.Cling
+<com.android.cphelps76.Cling
     xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:launcher="http://schemas.android.com/apk/res-auto/com.android.launcher3"
+    xmlns:launcher="http://schemas.android.com/apk/res-auto/com.android.cphelps76"
     launcher:drawIdentifier="folder_large">
     <LinearLayout
         android:id="@+id/folder_bubble"
@@ -63,4 +63,4 @@
             android:layout_gravity="right"
             android:onClick="dismissFolderCling" />
     </LinearLayout>
-</com.android.launcher3.Cling>
+</com.android.cphelps76.Cling>

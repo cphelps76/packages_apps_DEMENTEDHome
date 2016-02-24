@@ -35,7 +35,7 @@
     </LinearLayout>
 
     <view
-        class="com.android.launcher3.DynamicGridSizeFragment$GridSizeView"
+        class="com.android.cphelps76.DynamicGridSizeFragment$GridSizeView"
         android:id="@+id/dynamic_grid_size_image"
         android:layout_width="@dimen/dynamic_grid_size_image_width"
         android:layout_height="@dimen/dynamic_grid_size_image_height"

@@ -14,7 +14,7 @@
      See the License for the specific language governing permissions and
      limitations under the License.
 -->
-<favorites xmlns:launcher="http://schemas.android.com/apk/res/com.android.launcher3">
+<favorites xmlns:launcher="http://schemas.android.com/apk/res/com.android.cphelps76">
     <!-- Screen [1] -->
     <folder launcher:screen="1" launcher:x="0" launcher:y="3" launcher:title="@string/google_title">
         <favorite
