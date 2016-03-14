@@ -16,16 +16,26 @@
 
 package com.android.cphelps76;
 
+import android.annotation.TargetApi;
 import android.app.Activity;
+import android.app.SearchManager;
+import android.appwidget.AppWidgetManager;
+import android.appwidget.AppWidgetProviderInfo;
 import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
+import android.database.Cursor;
 import android.graphics.Bitmap;
-import android.graphics.BlurMaskFilter;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
-import android.graphics.ColorMatrix;
-import android.graphics.ColorMatrixColorFilter;
+import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.PaintFlagsDrawFilter;
@@ -33,31 +43,42 @@ import android.graphics.Rect;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.PaintDrawable;
-import android.os.UserManager;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Process;
+import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.Pair;
+import android.util.SparseArray;
+import android.util.TypedValue;
 import android.view.View;
 import android.widget.Toast;
 
+import com.android.cphelps76.settings.SettingsProvider;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Locale;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Various utilities shared amongst the Launcher's classes.
  */
 public final class Utilities {
+
     private static final String TAG = "Launcher.Utilities";
 
-    private static int sIconWidth = -1;
-    private static int sIconHeight = -1;
-    public static int sIconTextureWidth = -1;
-    public static int sIconTextureHeight = -1;
-
-    private static final Paint sBlurPaint = new Paint();
-    private static final Paint sGlowColorPressedPaint = new Paint();
-    private static final Paint sGlowColorFocusedPaint = new Paint();
-    private static final Paint sDisabledPaint = new Paint();
     private static final Rect sOldBounds = new Rect();
     private static final Canvas sCanvas = new Canvas();
+
+    private static final Pattern sTrimPattern =
+            Pattern.compile("^[\\s|\\p{javaSpaceChar}]*(.*)[\\s|\\p{javaSpaceChar}]*$");
 
     static {
         sCanvas.setDrawFilter(new PaintFlagsDrawFilter(Paint.DITHER_FLAG,
@@ -66,76 +87,102 @@ public final class Utilities {
     static int sColors[] = { 0xffff0000, 0xff00ff00, 0xff0000ff };
     static int sColorIndex = 0;
 
+    private static final int[] sLoc0 = new int[2];
+    private static final int[] sLoc1 = new int[2];
+
+    // TODO: use Build.VERSION_CODES when available
+    public static final boolean ATLEAST_MARSHMALLOW = Build.VERSION.SDK_INT >= 23;
+
+    public static final boolean ATLEAST_LOLLIPOP_MR1 =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1;
+
+    public static final boolean ATLEAST_LOLLIPOP =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP;
+
+    public static final boolean ATLEAST_KITKAT =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT;
+
+    public static final boolean ATLEAST_JB_MR1 =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1;
+
+    public static final boolean ATLEAST_JB_MR2 =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2;
 
     // To turn on these properties, type
     // adb shell setprop log.tag.PROPERTY_NAME [VERBOSE | SUPPRESS]
-    static final String FORCE_ENABLE_ROTATION_PROPERTY = "launcher_force_rotate";
-    public static boolean sForceEnableRotation = isPropertyEnabled(FORCE_ENABLE_ROTATION_PROPERTY);
+    private static final String FORCE_ENABLE_ROTATION_PROPERTY = "launcher_force_rotate";
+    private static boolean sForceEnableRotation = isPropertyEnabled(FORCE_ENABLE_ROTATION_PROPERTY);
 
-    /**
-     * Returns a FastBitmapDrawable with the icon, accurately sized.
-     */
-    static Drawable createIconDrawable(Bitmap icon) {
-        FastBitmapDrawable d = new FastBitmapDrawable(icon);
-        d.setFilterBitmap(true);
-        resizeIconDrawable(d);
-        return d;
-    }
-
-    /**
-     * Resizes an icon drawable to the correct icon size.
-     */
-    static void resizeIconDrawable(Drawable icon) {
-        icon.setBounds(0, 0, sIconTextureWidth, sIconTextureHeight);
-    }
-
-    private static boolean isPropertyEnabled(String propertyName) {
+    public static boolean isPropertyEnabled(String propertyName) {
         return Log.isLoggable(propertyName, Log.VERBOSE);
     }
 
-    public static boolean isRotationEnabled(Context c) {
-        boolean enableRotation = sForceEnableRotation ||
-                c.getResources().getBoolean(R.bool.allow_rotation);
-        return enableRotation;
+    public static boolean isAllowRotationPrefEnabled(Context context, boolean multiProcess) {
+        boolean allowRotationPref = SettingsProvider.getBoolean(context,
+                SettingsProvider.SETTINGS_UI_ALLOW_ROTATION,
+                R.bool.preferences_interface_allow_rotation);
+        return sForceEnableRotation || allowRotationPref;
+    }
+
+    public static boolean isRotationAllowedForDevice(Context context) {
+        return sForceEnableRotation || context.getResources().getBoolean(R.bool.preferences_interface_allow_rotation);
+    }
+
+    public static Bitmap createIconBitmap(Cursor c, int iconIndex, Context context) {
+        byte[] data = c.getBlob(iconIndex);
+        try {
+            return createIconBitmap(BitmapFactory.decodeByteArray(data, 0, data.length), context);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
-     * Returns a bitmap suitable for the all apps view. Used to convert pre-ICS
-     * icon bitmaps that are stored in the database (which were 74x74 pixels at hdpi size)
-     * to the proper size (48dp)
+     * Returns a bitmap suitable for the all apps view. If the package or the resource do not
+     * exist, it returns null.
      */
-    static Bitmap createIconBitmap(Bitmap icon, Context context) {
-        int textureWidth = sIconTextureWidth;
-        int textureHeight = sIconTextureHeight;
-        int sourceWidth = icon.getWidth();
-        int sourceHeight = icon.getHeight();
-        if (sourceWidth > textureWidth && sourceHeight > textureHeight) {
-            // Icon is bigger than it should be; clip it (solves the GB->ICS migration case)
-            return Bitmap.createBitmap(icon,
-                    (sourceWidth - textureWidth) / 2,
-                    (sourceHeight - textureHeight) / 2,
-                    textureWidth, textureHeight);
-        } else if (sourceWidth == textureWidth && sourceHeight == textureHeight) {
-            // Icon is the right size, no need to change it
-            return icon;
-        } else {
-            // Icon is too small, render to a larger bitmap
-            final Resources resources = context.getResources();
-            return createIconBitmap(new BitmapDrawable(resources, icon), context);
+    public static Bitmap createIconBitmap(String packageName, String resourceName,
+            Context context) {
+        PackageManager packageManager = context.getPackageManager();
+        // the resource
+        try {
+            Resources resources = packageManager.getResourcesForApplication(packageName);
+            if (resources != null) {
+                final int id = resources.getIdentifier(resourceName, null, null);
+                return createIconBitmap(
+                        resources.getDrawableForDensity(id, LauncherAppState.getInstance()
+                                .getInvariantDeviceProfile().fillResIconDpi), context);
+            }
+        } catch (Exception e) {
+            // Icon not found.
         }
+        return null;
+    }
+
+    private static int getIconBitmapSize() {
+        return LauncherAppState.getInstance().getInvariantDeviceProfile().iconBitmapSize;
+    }
+
+    /**
+     * Returns a bitmap which is of the appropriate size to be displayed as an icon
+     */
+    public static Bitmap createIconBitmap(Bitmap icon, Context context) {
+        final int iconBitmapSize = getIconBitmapSize();
+        if (iconBitmapSize == icon.getWidth() && iconBitmapSize == icon.getHeight()) {
+            return icon;
+        }
+        return createIconBitmap(new BitmapDrawable(context.getResources(), icon), context);
     }
 
     /**
      * Returns a bitmap suitable for the all apps view.
      */
     public static Bitmap createIconBitmap(Drawable icon, Context context) {
-        synchronized (sCanvas) { // we share the statics :-(
-            if (sIconWidth == -1) {
-                initStatics(context);
-            }
+        synchronized (sCanvas) {
+            final int iconBitmapSize = getIconBitmapSize();
 
-            int width = sIconWidth;
-            int height = sIconHeight;
+            int width = iconBitmapSize;
+            int height = iconBitmapSize;
 
             if (icon instanceof PaintDrawable) {
                 PaintDrawable painter = (PaintDrawable) icon;
@@ -162,8 +209,8 @@ public final class Utilities {
             }
 
             // no intrinsic size --> use default size
-            int textureWidth = sIconTextureWidth;
-            int textureHeight = sIconTextureHeight;
+            int textureWidth = iconBitmapSize;
+            int textureHeight = iconBitmapSize;
 
             final Bitmap bitmap = Bitmap.createBitmap(textureWidth, textureHeight,
                     Bitmap.Config.ARGB_8888);
@@ -191,30 +238,6 @@ public final class Utilities {
             canvas.setBitmap(null);
 
             return bitmap;
-        }
-    }
-
-    /**
-     * Returns a Bitmap representing the thumbnail of the specified Bitmap.
-     *
-     * @param bitmap The bitmap to get a thumbnail of.
-     * @param context The application's context.
-     *
-     * @return A thumbnail for the specified bitmap or the bitmap itself if the
-     *         thumbnail could not be created.
-     */
-    static Bitmap resampleIconBitmap(Bitmap bitmap, Context context) {
-        synchronized (sCanvas) { // we share the statics :-(
-            if (sIconWidth == -1) {
-                initStatics(context);
-            }
-
-            if (bitmap.getWidth() == sIconWidth && bitmap.getHeight() == sIconHeight) {
-                return bitmap;
-            } else {
-                final Resources resources = context.getResources();
-                return createIconBitmap(new BitmapDrawable(resources, bitmap), context);
-            }
         }
     }
 
@@ -306,27 +329,15 @@ public final class Utilities {
         return scale;
     }
 
-    private static void initStatics(Context context) {
-        final Resources resources = context.getResources();
-        final DisplayMetrics metrics = resources.getDisplayMetrics();
-        final float density = metrics.density;
-
-        sIconWidth = sIconHeight = (int) resources.getDimension(R.dimen.app_icon_size);
-        sIconTextureWidth = sIconTextureHeight = sIconWidth;
-
-        sBlurPaint.setMaskFilter(new BlurMaskFilter(5 * density, BlurMaskFilter.Blur.NORMAL));
-        sGlowColorPressedPaint.setColor(0xffffc300);
-        sGlowColorFocusedPaint.setColor(0xffff8e00);
-
-        ColorMatrix cm = new ColorMatrix();
-        cm.setSaturation(0.2f);
-        sDisabledPaint.setColorFilter(new ColorMatrixColorFilter(cm));
-        sDisabledPaint.setAlpha(0x88);
-    }
-
-    public static void setIconSize(int widthPx) {
-        sIconWidth = sIconHeight = widthPx;
-        sIconTextureWidth = sIconTextureHeight = widthPx;
+    /**
+     * Utility method to determine whether the given point, in local coordinates,
+     * is inside the view, where the area of the view is expanded by the slop factor.
+     * This method is called while processing touch-move events to determine if the event
+     * is still within the view.
+     */
+    public static boolean pointInView(View v, float localX, float localY, float slop) {
+        return localX >= -slop && localY >= -slop && localX < (v.getWidth() + slop) &&
+                localY < (v.getHeight() + slop);
     }
 
     public static void scaleRect(Rect r, float scale) {
@@ -336,6 +347,25 @@ public final class Utilities {
             r.right = (int) (r.right * scale + 0.5f);
             r.bottom = (int) (r.bottom * scale + 0.5f);
         }
+    }
+
+    public static int[] getCenterDeltaInScreenSpace(View v0, View v1, int[] delta) {
+        v0.getLocationInWindow(sLoc0);
+        v1.getLocationInWindow(sLoc1);
+
+        sLoc0[0] += (v0.getMeasuredWidth() * v0.getScaleX()) / 2;
+        sLoc0[1] += (v0.getMeasuredHeight() * v0.getScaleY()) / 2;
+        sLoc1[0] += (v1.getMeasuredWidth() * v1.getScaleX()) / 2;
+        sLoc1[1] += (v1.getMeasuredHeight() * v1.getScaleY()) / 2;
+
+        if (delta == null) {
+            delta = new int[2];
+        }
+
+        delta[0] = sLoc1[0] - sLoc0[0];
+        delta[1] = sLoc1[1] - sLoc0[1];
+
+        return delta;
     }
 
     public static void scaleRectAboutCenter(Rect r, float scale) {
@@ -360,8 +390,352 @@ public final class Utilities {
         }
     }
 
-    public static boolean isRestrictedProfile(Context context) {
-        UserManager um = (UserManager) context.getSystemService(Context.USER_SERVICE);
-        return um.getUserInfo(um.getUserHandle()).isRestricted();
+    static boolean isSystemApp(Context context, Intent intent) {
+        PackageManager pm = context.getPackageManager();
+        ComponentName cn = intent.getComponent();
+        String packageName = null;
+        if (cn == null) {
+            ResolveInfo info = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY);
+            if ((info != null) && (info.activityInfo != null)) {
+                packageName = info.activityInfo.packageName;
+            }
+        } else {
+            packageName = cn.getPackageName();
+        }
+        if (packageName != null) {
+            try {
+                PackageInfo info = pm.getPackageInfo(packageName, 0);
+                return (info != null) && (info.applicationInfo != null) &&
+                        ((info.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0);
+            } catch (NameNotFoundException e) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    /**
+     * This picks a dominant color, looking for high-saturation, high-value, repeated hues.
+     * @param bitmap The bitmap to scan
+     * @param samples The approximate max number of samples to use.
+     */
+    static int findDominantColorByHue(Bitmap bitmap, int samples) {
+        final int height = bitmap.getHeight();
+        final int width = bitmap.getWidth();
+        int sampleStride = (int) Math.sqrt((height * width) / samples);
+        if (sampleStride < 1) {
+            sampleStride = 1;
+        }
+
+        // This is an out-param, for getting the hsv values for an rgb
+        float[] hsv = new float[3];
+
+        // First get the best hue, by creating a histogram over 360 hue buckets,
+        // where each pixel contributes a score weighted by saturation, value, and alpha.
+        float[] hueScoreHistogram = new float[360];
+        float highScore = -1;
+        int bestHue = -1;
+
+        for (int y = 0; y < height; y += sampleStride) {
+            for (int x = 0; x < width; x += sampleStride) {
+                int argb = bitmap.getPixel(x, y);
+                int alpha = 0xFF & (argb >> 24);
+                if (alpha < 0x80) {
+                    // Drop mostly-transparent pixels.
+                    continue;
+                }
+                // Remove the alpha channel.
+                int rgb = argb | 0xFF000000;
+                Color.colorToHSV(rgb, hsv);
+                // Bucket colors by the 360 integer hues.
+                int hue = (int) hsv[0];
+                if (hue < 0 || hue >= hueScoreHistogram.length) {
+                    // Defensively avoid array bounds violations.
+                    continue;
+                }
+                float score = hsv[1] * hsv[2];
+                hueScoreHistogram[hue] += score;
+                if (hueScoreHistogram[hue] > highScore) {
+                    highScore = hueScoreHistogram[hue];
+                    bestHue = hue;
+                }
+            }
+        }
+
+        SparseArray<Float> rgbScores = new SparseArray<Float>();
+        int bestColor = 0xff000000;
+        highScore = -1;
+        // Go back over the RGB colors that match the winning hue,
+        // creating a histogram of weighted s*v scores, for up to 100*100 [s,v] buckets.
+        // The highest-scoring RGB color wins.
+        for (int y = 0; y < height; y += sampleStride) {
+            for (int x = 0; x < width; x += sampleStride) {
+                int rgb = bitmap.getPixel(x, y) | 0xff000000;
+                Color.colorToHSV(rgb, hsv);
+                int hue = (int) hsv[0];
+                if (hue == bestHue) {
+                    float s = hsv[1];
+                    float v = hsv[2];
+                    int bucket = (int) (s * 100) + (int) (v * 10000);
+                    // Score by cumulative saturation * value.
+                    float score = s * v;
+                    Float oldTotal = rgbScores.get(bucket);
+                    float newTotal = oldTotal == null ? score : oldTotal + score;
+                    rgbScores.put(bucket, newTotal);
+                    if (newTotal > highScore) {
+                        highScore = newTotal;
+                        // All the colors in the winning bucket are very similar. Last in wins.
+                        bestColor = rgb;
+                    }
+                }
+            }
+        }
+        return bestColor;
+    }
+
+    /*
+     * Finds a system apk which had a broadcast receiver listening to a particular action.
+     * @param action intent action used to find the apk
+     * @return a pair of apk package name and the resources.
+     */
+    static Pair<String, Resources> findSystemApk(String action, PackageManager pm) {
+        final Intent intent = new Intent(action);
+        for (ResolveInfo info : pm.queryBroadcastReceivers(intent, 0)) {
+            if (info.activityInfo != null &&
+                    (info.activityInfo.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+                final String packageName = info.activityInfo.packageName;
+                try {
+                    final Resources res = pm.getResourcesForApplication(packageName);
+                    return Pair.create(packageName, res);
+                } catch (NameNotFoundException e) {
+                    Log.w(TAG, "Failed to find resources for " + packageName);
+                }
+            }
+        }
+        return null;
+    }
+
+    @TargetApi(Build.VERSION_CODES.KITKAT)
+    public static boolean isViewAttachedToWindow(View v) {
+        if (ATLEAST_KITKAT) {
+            return v.isAttachedToWindow();
+        } else {
+            // A proxy call which returns null, if the view is not attached to the window.
+            return v.getKeyDispatcherState() != null;
+        }
+    }
+
+    /**
+     * Returns a widget with category {@link AppWidgetProviderInfo#WIDGET_CATEGORY_SEARCHBOX}
+     * provided by the same package which is set to be global search activity.
+     * If widgetCategory is not supported, or no such widget is found, returns the first widget
+     * provided by the package.
+     */
+    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
+    public static AppWidgetProviderInfo getSearchWidgetProvider(Context context) {
+        SearchManager searchManager =
+                (SearchManager) context.getSystemService(Context.SEARCH_SERVICE);
+        ComponentName searchComponent = searchManager.getGlobalSearchActivity();
+        if (searchComponent == null) return null;
+        String providerPkg = searchComponent.getPackageName();
+
+        AppWidgetProviderInfo defaultWidgetForSearchPackage = null;
+
+        AppWidgetManager appWidgetManager = AppWidgetManager.getInstance(context);
+        for (AppWidgetProviderInfo info : appWidgetManager.getInstalledProviders()) {
+            if (info.provider.getPackageName().equals(providerPkg)) {
+                if (ATLEAST_JB_MR1) {
+                    if ((info.widgetCategory & AppWidgetProviderInfo.WIDGET_CATEGORY_SEARCHBOX) != 0) {
+                        return info;
+                    } else if (defaultWidgetForSearchPackage == null) {
+                        defaultWidgetForSearchPackage = info;
+                    }
+                } else {
+                    return info;
+                }
+            }
+        }
+        return defaultWidgetForSearchPackage;
+    }
+
+    /**
+     * Compresses the bitmap to a byte array for serialization.
+     */
+    public static byte[] flattenBitmap(Bitmap bitmap) {
+        // Try go guesstimate how much space the icon will take when serialized
+        // to avoid unnecessary allocations/copies during the write.
+        int size = bitmap.getWidth() * bitmap.getHeight() * 4;
+        ByteArrayOutputStream out = new ByteArrayOutputStream(size);
+        try {
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
+            out.flush();
+            out.close();
+            return out.toByteArray();
+        } catch (IOException e) {
+            Log.w(TAG, "Could not write bitmap");
+            return null;
+        }
+    }
+
+    /**
+     * Find the first vacant cell, if there is one.
+     *
+     * @param vacant Holds the x and y coordinate of the vacant cell
+     * @param spanX Horizontal cell span.
+     * @param spanY Vertical cell span.
+     *
+     * @return true if a vacant cell was found
+     */
+    public static boolean findVacantCell(int[] vacant, int spanX, int spanY,
+            int xCount, int yCount, boolean[][] occupied) {
+
+        for (int y = 0; (y + spanY) <= yCount; y++) {
+            for (int x = 0; (x + spanX) <= xCount; x++) {
+                boolean available = !occupied[x][y];
+                out:            for (int i = x; i < x + spanX; i++) {
+                    for (int j = y; j < y + spanY; j++) {
+                        available = available && !occupied[i][j];
+                        if (!available) break out;
+                    }
+                }
+
+                if (available) {
+                    vacant[0] = x;
+                    vacant[1] = y;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Trims the string, removing all whitespace at the beginning and end of the string.
+     * Non-breaking whitespaces are also removed.
+     */
+    public static String trim(CharSequence s) {
+        if (s == null) {
+            return null;
+        }
+
+        // Just strip any sequence of whitespace or java space characters from the beginning and end
+        Matcher m = sTrimPattern.matcher(s);
+        return m.replaceAll("$1");
+    }
+
+    /**
+     * Calculates the height of a given string at a specific text size.
+     */
+    public static float calculateTextHeight(float textSizePx) {
+        Paint p = new Paint();
+        p.setTextSize(textSizePx);
+        Paint.FontMetrics fm = p.getFontMetrics();
+        return -fm.top + fm.bottom;
+    }
+
+    /**
+     * Convenience println with multiple args.
+     */
+    public static void println(String key, Object... args) {
+        StringBuilder b = new StringBuilder();
+        b.append(key);
+        b.append(": ");
+        boolean isFirstArgument = true;
+        for (Object arg : args) {
+            if (isFirstArgument) {
+                isFirstArgument = false;
+            } else {
+                b.append(", ");
+            }
+            b.append(arg);
+        }
+        System.out.println(b.toString());
+    }
+
+    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
+    public static boolean isRtl(Resources res) {
+        return ATLEAST_JB_MR1 &&
+                (res.getConfiguration().getLayoutDirection() == View.LAYOUT_DIRECTION_RTL);
+    }
+
+    public static void assertWorkerThread() {
+        if (LauncherAppState.isDogfoodBuild() &&
+                (LauncherModel.sWorkerThread.getThreadId() != Process.myTid())) {
+            throw new IllegalStateException();
+        }
+    }
+
+    /**
+     * Returns true if the intent is a valid launch intent for a launcher activity of an app.
+     * This is used to identify shortcuts which are different from the ones exposed by the
+     * applications' manifest file.
+     *
+     * @param launchIntent The intent that will be launched when the shortcut is clicked.
+     */
+    public static boolean isLauncherAppTarget(Intent launchIntent) {
+        if (launchIntent != null
+                && Intent.ACTION_MAIN.equals(launchIntent.getAction())
+                && launchIntent.getComponent() != null
+                && launchIntent.getCategories() != null
+                && launchIntent.getCategories().size() == 1
+                && launchIntent.hasCategory(Intent.CATEGORY_LAUNCHER)
+                && TextUtils.isEmpty(launchIntent.getDataString())) {
+            // An app target can either have no extra or have ItemInfo.EXTRA_PROFILE.
+            Bundle extras = launchIntent.getExtras();
+            if (extras == null) {
+                return true;
+            } else {
+                Set<String> keys = extras.keySet();
+                return keys.size() == 1 && keys.contains(ItemInfo.EXTRA_PROFILE);
+            }
+        };
+        return false;
+    }
+
+    public static float dpiFromPx(int size, DisplayMetrics metrics){
+        return (size / metrics.density);
+    }
+    public static int pxFromDp(float size, DisplayMetrics metrics) {
+        return (int) Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
+                size, metrics));
+    }
+    public static int pxFromSp(float size, DisplayMetrics metrics) {
+        return (int) Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP,
+                size, metrics));
+    }
+
+    public static String createDbSelectionQuery(String columnName, Iterable<?> values) {
+        return String.format(Locale.ENGLISH, "%s IN (%s)", columnName, TextUtils.join(", ", values));
+    }
+
+    public static boolean searchActivityExists(Context context) {
+        final SearchManager searchManager =
+                (SearchManager) context.getSystemService(Context.SEARCH_SERVICE);
+        ComponentName globalSearchActivity = searchManager.getGlobalSearchActivity();
+
+        return globalSearchActivity != null;
+    }
+
+    public static boolean isPackageInstalled(Context context, String pkg) {
+        PackageManager packageManager = context.getPackageManager();
+        try {
+            PackageInfo pi = packageManager.getPackageInfo(pkg, 0);
+            return pi.applicationInfo.enabled;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    public static boolean isNetworkConnected(Context context) {
+        ConnectivityManager connectivityManager = (ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        NetworkInfo activeNetwork = connectivityManager.getActiveNetworkInfo();
+        return activeNetwork != null && activeNetwork.isConnected();
+    }
+
+    public static boolean isConnectedToWiFi(Context context) {
+        ConnectivityManager connectivityManager = (ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        return connectivityManager.getNetworkInfo(ConnectivityManager.TYPE_WIFI).isConnected();
     }
 }

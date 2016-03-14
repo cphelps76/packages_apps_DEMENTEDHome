@@ -18,5 +18,5 @@ package com.android.cphelps76.config;
 
 public class ProviderConfig {
 
-    public static final String AUTHORITY = "com.android.cphelps76.settings";
+    public static final String AUTHORITY = "com.android.cphelps76.settings".intern();
 }

@@ -21,8 +21,13 @@ import android.animation.AnimatorSet;
 import android.animation.ObjectAnimator;
 import android.animation.PropertyValuesHolder;
 import android.animation.ValueAnimator;
+import android.annotation.TargetApi;
+import android.os.Build;
 import android.view.View;
+import android.view.ViewAnimationUtils;
 import android.view.ViewTreeObserver;
+
+import com.android.cphelps76.util.UiThreadCircularReveal;
 
 import java.util.HashSet;
 import java.util.WeakHashMap;
@@ -103,12 +108,7 @@ public class LauncherAnimUtils {
         anim.setPropertyName(propertyName);
         anim.setFloatValues(values);
         cancelOnDestroyActivity(anim);
-        // If the animation scale is less than 1f the FirstFrameAnimatorHelper sometimes causes
-        // the animation to not finish (e.g. opening a Folder will result in the Folder View's
-        // alpha being stuck somewhere between 0-1f.
-        if (Launcher.isAnimatorScaleSafe()) {
-            new FirstFrameAnimatorHelper(anim, target);
-        }
+        new FirstFrameAnimatorHelper(anim, target);
         return anim;
     }
 
@@ -118,12 +118,7 @@ public class LauncherAnimUtils {
         anim.setTarget(target);
         anim.setValues(values);
         cancelOnDestroyActivity(anim);
-        // If the animation scale is less than 1f the FirstFrameAnimatorHelper sometimes causes
-        // the animation to not finish (e.g. opening a Folder will result in the Folder View's
-        // alpha being stuck somewhere between 0-1f.
-        if (Launcher.isAnimatorScaleSafe()) {
-            new FirstFrameAnimatorHelper(anim, target);
-        }
+        new FirstFrameAnimatorHelper(anim, target);
         return anim;
     }
 
@@ -133,12 +128,16 @@ public class LauncherAnimUtils {
         anim.setTarget(target);
         anim.setValues(values);
         cancelOnDestroyActivity(anim);
-        // If the animation scale is less than 1f the FirstFrameAnimatorHelper sometimes causes
-        // the animation to not finish (e.g. opening a Folder will result in the Folder View's
-        // alpha being stuck somewhere between 0-1f.
-        if (Launcher.isAnimatorScaleSafe()) {
-            new FirstFrameAnimatorHelper(anim, view);
-        }
+        new FirstFrameAnimatorHelper(anim, view);
+        return anim;
+    }
+
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    public static ValueAnimator createCircularReveal(View view, int centerX,
+            int centerY, float startRadius, float endRadius) {
+        ValueAnimator anim = UiThreadCircularReveal.createCircularReveal(view, centerX,
+                centerY, startRadius, endRadius);
+        new FirstFrameAnimatorHelper(anim, view);
         return anim;
     }
 }

@@ -16,7 +16,6 @@
 package com.android.cphelps76.list;
 
 import android.content.Context;
-import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 
@@ -113,56 +112,22 @@ public abstract class PinnedHeaderListAdapter extends CompositeCursorAdapter
         int headerViewsCount = listView.getHeaderViewsCount();
 
         // Starting at the top, find and pin headers for partitions preceding the visible one(s)
-        int maxTopHeader = -1;
         int topHeaderHeight = 0;
         for (int i = 0; i < size; i++) {
             if (mHeaderVisibility[i]) {
                 int position = listView.getPositionAt(topHeaderHeight) - headerViewsCount;
                 int partition = getPartitionForPosition(position);
                 if (i > partition) {
-                        break;
+                    break;
                 }
 
                 if (!unCached){
                     listView.setHeaderPinnedAtTop(i, topHeaderHeight, false);
                     topHeaderHeight += listView.getPinnedHeaderHeight(i);
-                    maxTopHeader = i;
                 }
 
             }
         }
-
-        // Starting at the bottom, find and pin headers for partitions following the visible one(s)
-        /*int maxBottomHeader = size;
-        int bottomHeaderHeight = 0;
-        int listHeight = listView.getHeight();
-        for (int i = size; --i > maxTopHeader;) {
-            if (mHeaderVisibility[i]) {
-                int position = listView.getPositionAt(listHeight - bottomHeaderHeight)
-                        - headerViewsCount;
-                if (position < 0) {
-                    break;
-                }
-
-                int partition = getPartitionForPosition(position - 1);
-                if (partition == -1 || i <= partition) {
-                    break;
-                }
-
-                int height = listView.getPinnedHeaderHeight(i);
-                bottomHeaderHeight += height;
-
-                listView.setHeaderPinnedAtBottom(i, listHeight - bottomHeaderHeight, false);
-                maxBottomHeader = i;
-            }
-        }
-
-        // Headers in between the top-pinned and bottom-pinned should be hidden
-        for (int i = maxTopHeader + 1; i < maxBottomHeader; i++) {
-            if (mHeaderVisibility[i]) {
-                listView.setHeaderInvisible(i, isPartitionEmpty(i));
-            }
-        }*/
     }
 
     @Override

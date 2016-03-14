@@ -357,7 +357,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
      * Returns the header view for the specified partition, creating one if needed.
      */
     protected View getHeaderView(int partition, Cursor cursor, View convertView,
-            ViewGroup parent) {
+                                 ViewGroup parent) {
         View view = convertView != null
                 ? convertView
                 : newHeaderView(mContext, partition, cursor, parent);
@@ -369,7 +369,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
      * Creates the header view for the specified partition.
      */
     protected View newHeaderView(Context context, int partition, Cursor cursor,
-            ViewGroup parent) {
+                                 ViewGroup parent) {
         return null;
     }
 
@@ -383,7 +383,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
      * Returns an item view for the specified partition, creating one if needed.
      */
     protected View getView(int partition, Cursor cursor, int position, View convertView,
-            ViewGroup parent) {
+                           ViewGroup parent) {
         View view;
         if (convertView != null) {
             view = convertView;
@@ -399,7 +399,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
      * corresponds directly to the current cursor position.
      */
     protected abstract View newView(Context context, int partition, Cursor cursor, int position,
-            ViewGroup parent);
+                                    ViewGroup parent);
 
     /**
      * Binds an item view for the specified partition and position. Position

@@ -19,20 +19,23 @@
 -->
 <manifest
     xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.android.cphelps76"
-    android:versionName="@string/application_version"
-    android:versionCode="1000">
+    xmlns:androidprv="http://schemas.android.com/apk/prv/res/android"
+    package="com.android.cphelps76">
 
-    <uses-sdk android:targetSdkVersion="22" android:minSdkVersion="17"/>
+    <original-package android:name="com.android.cphelps76" />
+
+    <uses-sdk android:targetSdkVersion="23" android:minSdkVersion="22"/>
 
     <permission
-        android:name="com.android.cphelps76.permission.PRELOAD_WORKSPACE"
+        android:name="com.android.launcher.permission.INSTALL_SHORTCUT"
         android:permissionGroup="android.permission-group.SYSTEM_TOOLS"
-        android:protectionLevel="signatureOrSystem" />
+        android:protectionLevel="dangerous"
+        android:label="@string/permlab_install_shortcut"
+        android:description="@string/permdesc_install_shortcut" />
     <permission
         android:name="com.android.cphelps76.permission.READ_SETTINGS"
         android:permissionGroup="android.permission-group.SYSTEM_TOOLS"
-        android:protectionLevel="dangerous"
+        android:protectionLevel="normal"
         android:label="@string/permlab_read_settings"
         android:description="@string/permdesc_read_settings"/>
     <permission
@@ -41,14 +44,17 @@
         android:protectionLevel="signatureOrSystem"
         android:label="@string/permlab_write_settings"
         android:description="@string/permdesc_write_settings"/>
-
     <permission
         android:name="com.android.cphelps76.permission.RECEIVE_LAUNCH_BROADCASTS"
         android:protectionLevel="signature"
         />
+    <permission
+        android:name="com.android.cphelps76.permission.RECEIVE_FIRST_LOAD_BROADCAST"
+        android:protectionLevel="signatureOrSystem" />
 
-    <original-package android:name="com.cyanogenmod.trebuchet" />
-    <original-package android:name="org.cyanogenmod.trebuchet" />
+    <permission android:name="android.permission.SET_PREFERRED_APPLICATIONS"
+        android:protectionLevel="signature"
+        androidprv:allowViaWhitelist="true" />
 
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
@@ -56,25 +62,31 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.BIND_APPWIDGET" />
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
-    <uses-permission android:name="android.permission.MANAGE_USERS"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.INJECT_EVENTS" />
-    <uses-permission android:name="android.permission.GET_TASKS"/>
+    <uses-permission android:name="android.permission.BROADCAST_STICKY"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="com.android.launcher.permission.READ_SETTINGS" />
     <uses-permission android:name="com.android.launcher.permission.WRITE_SETTINGS" />
     <uses-permission android:name="com.android.cphelps76.permission.READ_SETTINGS" />
     <uses-permission android:name="com.android.cphelps76.permission.WRITE_SETTINGS" />
     <uses-permission android:name="com.android.cphelps76.permission.RECEIVE_LAUNCH_BROADCASTS" />
+    <uses-permission android:name="com.android.cphelps76.permission.RECEIVE_FIRST_LOAD_BROADCAST" />
     <uses-permission android:name="cyanogenmod.permission.PROTECTED_APP" />
+    <uses-permission android:name="com.cyngn.stats.SEND_ANALYTICS" />
 
     <application
         android:name="com.android.cphelps76.LauncherApplication"
-        android:label="@string/cm_application_name"
-        android:icon="@mipmap/ic_launcher_home"
+        android:allowBackup="@bool/enable_backup"
+        android:backupAgent="com.android.cphelps76.LauncherBackupAgentHelper"
         android:hardwareAccelerated="true"
+        android:icon="@mipmap/ic_launcher_home"
+        android:label="@string/cm_application_name"
         android:largeHeap="@bool/config_largeHeap"
-        android:requiredForAllUsers="true"
-        android:supportsRtl="true">
+        android:restoreAnyVersion="true"
+        android:supportsRtl="true" >
+
         <activity
             android:name="com.android.cphelps76.Launcher"
             android:launchMode="singleTask"
@@ -82,7 +94,32 @@
             android:stateNotNeeded="true"
             android:theme="@style/Theme"
             android:windowSoftInputMode="adjustPan"
-            android:screenOrientation="nosensor">
+            android:screenOrientation="nosensor"
+            android:resumeWhilePausing="true"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:configChanges="mcc|mnc"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.MONKEY"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- ENABLE_FOR_TESTING
+
+        <activity
+            android:name="com.android.cphelps76.testing.LauncherExtension"
+            android:launchMode="singleTask"
+            android:clearTaskOnLaunch="true"
+            android:stateNotNeeded="true"
+            android:theme="@style/Theme"
+            android:windowSoftInputMode="adjustPan"
+            android:screenOrientation="nosensor"
+            android:enabled="false">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
@@ -91,14 +128,7 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name="com.android.cphelps76.LauncherWallpaperPickerActivity"
-            android:theme="@style/Theme.WallpaperCropper"
-            android:label="@string/pick_wallpaper"
-            android:icon="@mipmap/ic_launcher_wallpaper"
-            android:finishOnCloseSystemDialogs="true"
-            android:process=":wallpaper_chooser">
-        </activity>
+        -->
 
         <activity
             android:name="com.android.cphelps76.ToggleWeightWatcher"
@@ -109,6 +139,33 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name="com.android.cphelps76.WallpaperPickerActivity"
+            android:theme="@style/Theme.WallpaperPicker"
+            android:label="@string/pick_wallpaper"
+            android:icon="@mipmap/ic_launcher_wallpaper"
+            android:finishOnCloseSystemDialogs="true"
+            android:process=":wallpaper_chooser">
+            <intent-filter>
+                <action android:name="android.intent.action.SET_WALLPAPER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name="com.android.cphelps76.WallpaperCropActivity"
+            android:theme="@style/Theme.WallpaperCropper"
+            android:label="@string/crop_wallpaper"
+            android:icon="@mipmap/ic_launcher_wallpaper"
+            android:finishOnCloseSystemDialogs="true"
+            android:process=":wallpaper_chooser">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.CROP_AND_SET_WALLPAPER" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
 
@@ -133,14 +190,13 @@
             >
         </service>
 
-        <!-- Intent received used to prepopulate the default workspace. -->
-        <receiver
-            android:name="com.android.cphelps76.PreloadReceiver"
-            android:permission="com.android.cphelps76.permission.PRELOAD_WORKSPACE">
+        <service
+            android:name="com.android.cphelps76.stats.internal.service.AggregationIntentService"
+            android:exported="false">
             <intent-filter>
-                <action android:name="com.android.cphelps76.action.PRELOAD_WORKSPACE" />
+               <action android:name="com.cyanogenmod.trebuchet.AGGREGATE_AND_TRACK" />
             </intent-filter>
-        </receiver>
+        </service>
 
         <receiver
             android:name="com.android.cphelps76.WallpaperChangedReceiver">
@@ -158,30 +214,22 @@
             </intent-filter>
         </receiver>
 
-        <!-- Intent received used to uninstall shortcuts from other applications -->
-        <receiver
-            android:name="com.android.cphelps76.UninstallShortcutReceiver"
-            android:permission="com.android.launcher.permission.UNINSTALL_SHORTCUT">
+        <!-- Intent received used to initialize a restored widget -->
+        <receiver android:name="com.android.cphelps76.AppWidgetsRestoredReceiver" >
             <intent-filter>
-                <action android:name="com.android.launcher.action.UNINSTALL_SHORTCUT" />
+                <action android:name="android.appwidget.action.APPWIDGET_HOST_RESTORED"/>
             </intent-filter>
         </receiver>
 
-        <!-- New user initialization; set up initial wallpaper -->
-        <receiver
-            android:name="com.android.cphelps76.UserInitializeReceiver"
-            android:exported="false">
+        <receiver android:name="com.android.cphelps76.StartupReceiver" >
             <intent-filter>
-                <action android:name="android.intent.action.USER_INITIALIZE" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
 
-        <receiver android:name="com.android.cphelps76.PackageChangedReceiver" >
+        <receiver android:name="com.android.cphelps76.ThemeChangedReceiver" >
             <intent-filter>
-                <action android:name="android.intent.action.PACKAGE_CHANGED"/>
-                <action android:name="android.intent.action.PACKAGE_REPLACED"/>
-                <action android:name="android.intent.action.PACKAGE_REMOVED"/>
-                <data android:scheme="package"></data>
+                <action android:name="org.cyanogenmod.intent.action.THEME_CHANGED"/>
             </intent-filter>
         </receiver>
 

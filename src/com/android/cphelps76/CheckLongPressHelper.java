@@ -18,16 +18,29 @@ package com.android.cphelps76;
 
 import android.view.View;
 
+import com.android.cphelps76.util.Thunk;
+
 public class CheckLongPressHelper {
-    private View mView;
-    private boolean mHasPerformedLongPress;
+
+    @Thunk View mView;
+    @Thunk View.OnLongClickListener mListener;
+    @Thunk boolean mHasPerformedLongPress;
+    private int mLongPressTimeout = 300;
     private CheckForLongPress mPendingCheckForLongPress;
 
     class CheckForLongPress implements Runnable {
         public void run() {
+            if (!mView.isLongClickable()) return;
+
             if ((mView.getParent() != null) && mView.hasWindowFocus()
                     && !mHasPerformedLongPress) {
-                if (mView.performLongClick()) {
+                boolean handled;
+                if (mListener != null) {
+                    handled = mListener.onLongClick(mView);
+                } else {
+                    handled = mView.performLongClick();
+                }
+                if (handled) {
                     mView.setPressed(false);
                     mHasPerformedLongPress = true;
                 }
@@ -39,14 +52,25 @@ public class CheckLongPressHelper {
         mView = v;
     }
 
+    public CheckLongPressHelper(View v, View.OnLongClickListener listener) {
+        mView = v;
+        mListener = listener;
+    }
+
+    /**
+     * Overrides the default long press timeout.
+     */
+    public void setLongPressTimeout(int longPressTimeout) {
+        mLongPressTimeout = longPressTimeout;
+    }
+
     public void postCheckForLongPress() {
         mHasPerformedLongPress = false;
 
         if (mPendingCheckForLongPress == null) {
             mPendingCheckForLongPress = new CheckForLongPress();
         }
-        mView.postDelayed(mPendingCheckForLongPress,
-                LauncherAppState.getInstance().getLongPressTimeout());
+        mView.postDelayed(mPendingCheckForLongPress, mLongPressTimeout);
     }
 
     public void cancelLongPress() {

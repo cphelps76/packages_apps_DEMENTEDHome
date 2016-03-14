@@ -15,21 +15,46 @@
 -->
 
 <!-- Full screen view projects under the status bar and contains the background -->
-<FrameLayout
+<com.android.cphelps76.LauncherRootView
     xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:launcher="http://schemas.android.com/apk/res-auto/com.android.cphelps76"
+    xmlns:launcher="http://schemas.android.com/apk/res-auto"
+    xmlns:insettable="http://schemas.android.com/apk/res-auto"
 
     android:id="@+id/launcher"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
     android:background="@drawable/workspace_bg">
+
+    <FrameLayout
+        android:id="@+id/reveal_fake_page_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="invisible"
+        android:alpha="1.0"
+        insettable:layout_ignoreInsets="true"
+        android:clipToPadding="false">
+
+        <ImageView
+            android:id="@+id/reveal_fake_folder_icon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:visibility="invisible"
+            android:background="@drawable/folder_bg_opaque"/>
+    </FrameLayout>
 
     <com.android.cphelps76.DragLayer
         android:id="@+id/drag_layer"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
+        <com.android.cphelps76.FocusIndicatorView
+            android:id="@+id/focus_indicator"
+            android:layout_width="52dp"
+            android:layout_height="52dp" />
+
         <!-- The workspace contains 5 screens of cells -->
+        <!-- DO NOT CHANGE THE ID -->
         <com.android.cphelps76.Workspace
             android:id="@+id/workspace"
             android:layout_width="match_parent"
@@ -38,10 +63,15 @@
             launcher:pageIndicator="@+id/page_indicator">
         </com.android.cphelps76.Workspace>
 
+        <!-- DO NOT CHANGE THE ID -->
         <include layout="@layout/hotseat"
             android:id="@+id/hotseat"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
+
+        <include layout="@layout/overview_panel"
+            android:id="@+id/overview_panel"
+            android:visibility="gone" />
 
         <!-- Keep these behind the workspace so that they are not visible when
              we go into AllApps -->
@@ -56,60 +86,23 @@
             android:id="@+id/search_drop_target_bar"
             layout="@layout/search_drop_target_bar" />
 
-        <!-- The Workspace cling must appear under the AppsCustomizePagedView below to ensure
-             that it is still visible during the transition to AllApps and doesn't overlay on
-             top of that view. -->
-        <com.android.cphelps76.ScrimView
-            android:id="@+id/cling_scrim"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
-        <include layout="@layout/first_run_cling"
-            android:id="@+id/first_run_cling"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
-        <include layout="@layout/migration_cling"
-            android:id="@+id/migration_cling"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
-        <include layout="@layout/migration_workspace_cling"
-            android:id="@+id/migration_workspace_cling"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
-        <include layout="@layout/workspace_cling"
-            android:id="@+id/workspace_cling"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
-        <include layout="@layout/folder_cling"
-            android:id="@+id/folder_cling"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
-
-        <!-- This is the search bar voice button proxy view.  It allows us to have a larger
-             touch target than the microphone constrained by the search bar bounds. -->
-        <com.android.cphelps76.DrawableStateProxyView
-            android:id="@+id/voice_button_proxy"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:layout_gravity="top|end"
-            android:clickable="true"
-            android:onClick="onClickVoiceButton"
-            android:importantForAccessibility="no"
-            launcher:sourceViewId="@+id/voice_button" />
-
-        <include layout="@layout/apps_customize_pane"
-            android:id="@+id/apps_customize_pane"
+        <include layout="@layout/widgets_view"
+            android:id="@+id/widgets_view"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:visibility="invisible" />
 
-        <include layout="@layout/overview_panel"
-            android:id="@+id/overview_panel"
-            android:visibility="gone" />
+        <include layout="@layout/all_apps"
+            android:id="@+id/apps_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="invisible" />
     </com.android.cphelps76.DragLayer>
-</FrameLayout>
+
+    <ViewStub
+        android:id="@+id/launcher_overlay_stub"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:inflatedId="@+id/launcher_overlay"
+        android:layout="@layout/launcher_overlay" />
+</com.android.cphelps76.LauncherRootView>

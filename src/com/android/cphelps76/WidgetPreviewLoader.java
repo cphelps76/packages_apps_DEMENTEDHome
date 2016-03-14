@@ -1,16 +1,15 @@
 package com.android.cphelps76;
 
-import android.appwidget.AppWidgetProviderInfo;
 import android.content.ComponentName;
 import android.content.ContentValues;
 import android.content.Context;
-import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
 import android.database.Cursor;
+import android.database.SQLException;
 import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteDiskIOException;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.graphics.Bitmap;
 import android.graphics.Bitmap.Config;
@@ -21,536 +20,361 @@ import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.Rect;
-import android.graphics.Shader;
+import android.graphics.RectF;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.AsyncTask;
+import android.os.Handler;
 import android.util.Log;
+import android.util.LongSparseArray;
 
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.lang.ref.SoftReference;
-import java.lang.ref.WeakReference;
+import com.android.cphelps76.compat.AppWidgetManagerCompat;
+import com.android.cphelps76.compat.UserHandleCompat;
+import com.android.cphelps76.compat.UserManagerCompat;
+import com.android.cphelps76.util.ComponentKey;
+import com.android.cphelps76.util.Thunk;
+import com.android.cphelps76.widget.WidgetCell;
+
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-
-abstract class SoftReferenceThreadLocal<T> {
-    private ThreadLocal<SoftReference<T>> mThreadLocal;
-    public SoftReferenceThreadLocal() {
-        mThreadLocal = new ThreadLocal<SoftReference<T>>();
-    }
-
-    abstract T initialValue();
-
-    public void set(T t) {
-        mThreadLocal.set(new SoftReference<T>(t));
-    }
-
-    public T get() {
-        SoftReference<T> reference = mThreadLocal.get();
-        T obj;
-        if (reference == null) {
-            obj = initialValue();
-            mThreadLocal.set(new SoftReference<T>(obj));
-            return obj;
-        } else {
-            obj = reference.get();
-            if (obj == null) {
-                obj = initialValue();
-                mThreadLocal.set(new SoftReference<T>(obj));
-            }
-            return obj;
-        }
-    }
-}
-
-class CanvasCache extends SoftReferenceThreadLocal<Canvas> {
-    @Override
-    protected Canvas initialValue() {
-        return new Canvas();
-    }
-}
-
-class PaintCache extends SoftReferenceThreadLocal<Paint> {
-    @Override
-    protected Paint initialValue() {
-        return null;
-    }
-}
-
-class BitmapCache extends SoftReferenceThreadLocal<Bitmap> {
-    @Override
-    protected Bitmap initialValue() {
-        return null;
-    }
-}
-
-class RectCache extends SoftReferenceThreadLocal<Rect> {
-    @Override
-    protected Rect initialValue() {
-        return new Rect();
-    }
-}
-
-class BitmapFactoryOptionsCache extends SoftReferenceThreadLocal<BitmapFactory.Options> {
-    @Override
-    protected BitmapFactory.Options initialValue() {
-        return new BitmapFactory.Options();
-    }
-}
+import java.util.Set;
+import java.util.WeakHashMap;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 
 public class WidgetPreviewLoader {
-    static final String TAG = "WidgetPreviewLoader";
-    static final String ANDROID_INCREMENTAL_VERSION_NAME_KEY = "android.incremental.version";
 
-    private int mPreviewBitmapWidth;
-    private int mPreviewBitmapHeight;
-    private String mSize;
-    private Context mContext;
-    private PackageManager mPackageManager;
-    private PagedViewCellLayout mWidgetSpacingLayout;
+    private static final String TAG = "WidgetPreviewLoader";
+    private static final boolean DEBUG = false;
 
-    // Used for drawing shortcut previews
-    private BitmapCache mCachedShortcutPreviewBitmap = new BitmapCache();
-    private PaintCache mCachedShortcutPreviewPaint = new PaintCache();
-    private CanvasCache mCachedShortcutPreviewCanvas = new CanvasCache();
+    private static final float WIDGET_PREVIEW_ICON_PADDING_PERCENTAGE = 0.25f;
 
-    // Used for drawing widget previews
-    private CanvasCache mCachedAppWidgetPreviewCanvas = new CanvasCache();
-    private RectCache mCachedAppWidgetPreviewSrcRect = new RectCache();
-    private RectCache mCachedAppWidgetPreviewDestRect = new RectCache();
-    private PaintCache mCachedAppWidgetPreviewPaint = new PaintCache();
-    private String mCachedSelectQuery;
-    private BitmapFactoryOptionsCache mCachedBitmapFactoryOptions = new BitmapFactoryOptionsCache();
+    private final HashMap<String, long[]> mPackageVersions = new HashMap<>();
 
-    private int mAppIconSize;
-    private IconCache mIconCache;
+    /**
+     * Weak reference objects, do not prevent their referents from being made finalizable,
+     * finalized, and then reclaimed.
+     * Note: synchronized block used for this variable is expensive and the block should always
+     * be posted to a background thread.
+     */
+    @Thunk final Set<Bitmap> mUnusedBitmaps =
+            Collections.newSetFromMap(new WeakHashMap<Bitmap, Boolean>());
 
-    private final float sWidgetPreviewIconPaddingPercentage = 0.25f;
-
+    private final Context mContext;
+    private final IconCache mIconCache;
+    private final UserManagerCompat mUserManager;
+    private final AppWidgetManagerCompat mManager;
     private CacheDb mDb;
+    private final int mProfileBadgeMargin;
 
-    private HashMap<String, WeakReference<Bitmap>> mLoadedPreviews;
-    private ArrayList<SoftReference<Bitmap>> mUnusedBitmaps;
-    private static HashSet<String> sInvalidPackages;
+    private final MainThreadExecutor mMainThreadExecutor = new MainThreadExecutor();
+    @Thunk final Handler mWorkerHandler;
 
-    static {
-        sInvalidPackages = new HashSet<String>();
-    }
-
-    public WidgetPreviewLoader(Context context) {
-        LauncherAppState app = LauncherAppState.getInstance();
-        DeviceProfile grid = app.getDynamicGrid().getDeviceProfile();
-
+    public WidgetPreviewLoader(Context context, IconCache iconCache) {
         mContext = context;
-        mPackageManager = mContext.getPackageManager();
-        mAppIconSize = grid.iconSizePx;
-        mIconCache = app.getIconCache();
-        mDb = app.getWidgetPreviewCacheDb();
-        mLoadedPreviews = new HashMap<String, WeakReference<Bitmap>>();
-        mUnusedBitmaps = new ArrayList<SoftReference<Bitmap>>();
-
-        SharedPreferences sp = context.getSharedPreferences(
-                LauncherAppState.getSharedPreferencesKey(), Context.MODE_PRIVATE);
-        final String lastVersionName = sp.getString(ANDROID_INCREMENTAL_VERSION_NAME_KEY, null);
-        final String versionName = android.os.Build.VERSION.INCREMENTAL;
-        if (!versionName.equals(lastVersionName)) {
-            // clear all the previews whenever the system version changes, to ensure that previews
-            // are up-to-date for any apps that might have been updated with the system
-            clearDb();
-
-            SharedPreferences.Editor editor = sp.edit();
-            editor.putString(ANDROID_INCREMENTAL_VERSION_NAME_KEY, versionName);
-            editor.commit();
-        }
-    }
-    
-    public void recreateDb() {
-        LauncherAppState app = LauncherAppState.getInstance();
-        app.recreateWidgetPreviewDb();
-        mDb = app.getWidgetPreviewCacheDb();
+        mIconCache = iconCache;
+        mManager = AppWidgetManagerCompat.getInstance(context);
+        mUserManager = UserManagerCompat.getInstance(context);
+        mDb = new CacheDb(context);
+        mWorkerHandler = new Handler(LauncherModel.getWorkerLooper());
+        mProfileBadgeMargin = context.getResources()
+                .getDimensionPixelSize(R.dimen.profile_badge_margin);
     }
 
-    public void setPreviewSize(int previewWidth, int previewHeight,
-            PagedViewCellLayout widgetSpacingLayout) {
-        mPreviewBitmapWidth = previewWidth;
-        mPreviewBitmapHeight = previewHeight;
-        mSize = previewWidth + "x" + previewHeight;
-        mWidgetSpacingLayout = widgetSpacingLayout;
+    public void recreateWidgetPreviewDb() {
+        if (mDb != null) {
+            mDb.close();
+        }
+        mDb = new CacheDb(mContext);
     }
 
-    public Bitmap getPreview(final Object o) {
-        final String name = getObjectName(o);
-        final String packageName = getObjectPackage(o);
-        // check if the package is valid
-        boolean packageValid = true;
-        synchronized(sInvalidPackages) {
-            packageValid = !sInvalidPackages.contains(packageName);
-        }
-        if (!packageValid) {
-            return null;
-        }
-        if (packageValid) {
-            synchronized(mLoadedPreviews) {
-                // check if it exists in our existing cache
-                if (mLoadedPreviews.containsKey(name) && mLoadedPreviews.get(name).get() != null) {
-                    return mLoadedPreviews.get(name).get();
-                }
-            }
-        }
+    /**
+     * Generates the widget preview on {@link AsyncTask#THREAD_POOL_EXECUTOR}. Must be
+     * called on UI thread
+     *
+     * @param o either {@link LauncherAppWidgetProviderInfo} or {@link ResolveInfo}
+     * @return a request id which can be used to cancel the request.
+     */
+    public PreviewLoadRequest getPreview(final Object o, int previewWidth,
+            int previewHeight, WidgetCell caller) {
+        String size = previewWidth + "x" + previewHeight;
+        WidgetCacheKey key = getObjectKey(o, size);
 
-        Bitmap unusedBitmap = null;
-        synchronized(mUnusedBitmaps) {
-            // not in cache; we need to load it from the db
-            while ((unusedBitmap == null || !unusedBitmap.isMutable() ||
-                    unusedBitmap.getWidth() != mPreviewBitmapWidth ||
-                    unusedBitmap.getHeight() != mPreviewBitmapHeight)
-                    && mUnusedBitmaps.size() > 0) {
-                unusedBitmap = mUnusedBitmaps.remove(0).get();
-            }
-            if (unusedBitmap != null) {
-                final Canvas c = mCachedAppWidgetPreviewCanvas.get();
-                c.setBitmap(unusedBitmap);
-                c.drawColor(0, PorterDuff.Mode.CLEAR);
-                c.setBitmap(null);
-            }
-        }
-
-        if (unusedBitmap == null) {
-            unusedBitmap = Bitmap.createBitmap(mPreviewBitmapWidth, mPreviewBitmapHeight,
-                    Bitmap.Config.ARGB_8888);
-        }
-
-        Bitmap preview = null;
-
-        if (packageValid) {
-            preview = readFromDb(name, unusedBitmap);
-        }
-
-        if (preview != null) {
-            synchronized(mLoadedPreviews) {
-                mLoadedPreviews.put(name, new WeakReference<Bitmap>(preview));
-            }
-            return preview;
-        } else {
-            // it's not in the db... we need to generate it
-            final Bitmap generatedPreview = generatePreview(o, unusedBitmap);
-            preview = generatedPreview;
-            if (preview != unusedBitmap) {
-                throw new RuntimeException("generatePreview is not recycling the bitmap " + o);
-            }
-
-            synchronized(mLoadedPreviews) {
-                mLoadedPreviews.put(name, new WeakReference<Bitmap>(preview));
-            }
-
-            // write to db on a thread pool... this can be done lazily and improves the performance
-            // of the first time widget previews are loaded
-            new AsyncTask<Void, Void, Void>() {
-                public Void doInBackground(Void ... args) {
-                    writeToDb(o, generatedPreview);
-                    return null;
-                }
-            }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, (Void) null);
-
-            return preview;
-        }
+        PreviewLoadTask task = new PreviewLoadTask(key, o, previewWidth, previewHeight, caller);
+        task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+        return new PreviewLoadRequest(task);
     }
 
-    public void recycleBitmap(Object o, Bitmap bitmapToRecycle) {
-        String name = getObjectName(o);
-        synchronized (mLoadedPreviews) {
-            if (mLoadedPreviews.containsKey(name)) {
-                Bitmap b = mLoadedPreviews.get(name).get();
-                if (b == bitmapToRecycle) {
-                    mLoadedPreviews.remove(name);
-                    if (bitmapToRecycle.isMutable()) {
-                        synchronized (mUnusedBitmaps) {
-                            mUnusedBitmaps.add(new SoftReference<Bitmap>(b));
-                        }
-                    }
-                } else {
-                    throw new RuntimeException("Bitmap passed in doesn't match up");
-                }
-            }
-        }
-    }
+    /**
+     * The DB holds the generated previews for various components. Previews can also have different
+     * sizes (landscape vs portrait).
+     */
+    private static class CacheDb extends SQLiteOpenHelper {
+        private static final int DB_VERSION = 4;
 
-    static class CacheDb extends SQLiteOpenHelper {
-        final static int DB_VERSION = 2;
-        final static String DB_NAME = "widgetpreviews.db";
-        final static String TABLE_NAME = "shortcut_and_widget_previews";
-        final static String COLUMN_NAME = "name";
-        final static String COLUMN_SIZE = "size";
-        final static String COLUMN_PREVIEW_BITMAP = "preview_bitmap";
-        Context mContext;
+        private static final String TABLE_NAME = "shortcut_and_widget_previews";
+        private static final String COLUMN_COMPONENT = "componentName";
+        private static final String COLUMN_USER = "profileId";
+        private static final String COLUMN_SIZE = "size";
+        private static final String COLUMN_PACKAGE = "packageName";
+        private static final String COLUMN_LAST_UPDATED = "lastUpdated";
+        private static final String COLUMN_VERSION = "version";
+        private static final String COLUMN_PREVIEW_BITMAP = "preview_bitmap";
 
         public CacheDb(Context context) {
-            super(context, new File(context.getCacheDir(), DB_NAME).getPath(), null, DB_VERSION);
-            // Store the context for later use
-            mContext = context;
+            super(context, LauncherFiles.WIDGET_PREVIEWS_DB, null, DB_VERSION);
         }
 
         @Override
         public void onCreate(SQLiteDatabase database) {
             database.execSQL("CREATE TABLE IF NOT EXISTS " + TABLE_NAME + " (" +
-                    COLUMN_NAME + " TEXT NOT NULL, " +
+                    COLUMN_COMPONENT + " TEXT NOT NULL, " +
+                    COLUMN_USER + " INTEGER NOT NULL, " +
                     COLUMN_SIZE + " TEXT NOT NULL, " +
-                    COLUMN_PREVIEW_BITMAP + " BLOB NOT NULL, " +
-                    "PRIMARY KEY (" + COLUMN_NAME + ", " + COLUMN_SIZE + ") " +
+                    COLUMN_PACKAGE + " TEXT NOT NULL, " +
+                    COLUMN_LAST_UPDATED + " INTEGER NOT NULL DEFAULT 0, " +
+                    COLUMN_VERSION + " INTEGER NOT NULL DEFAULT 0, " +
+                    COLUMN_PREVIEW_BITMAP + " BLOB, " +
+                    "PRIMARY KEY (" + COLUMN_COMPONENT + ", " + COLUMN_USER + ", " + COLUMN_SIZE + ") " +
                     ");");
         }
 
         @Override
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
             if (oldVersion != newVersion) {
-                // Delete all the records; they'll be repopulated as this is a cache
-                db.execSQL("DELETE FROM " + TABLE_NAME);
+                clearDB(db);
             }
+        }
+
+        @Override
+        public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            if (oldVersion != newVersion) {
+                clearDB(db);
+            }
+        }
+
+        private void clearDB(SQLiteDatabase db) {
+            db.execSQL("DROP TABLE IF EXISTS " + TABLE_NAME);
+            onCreate(db);
         }
     }
 
-    private static final String WIDGET_PREFIX = "Widget:";
-    private static final String SHORTCUT_PREFIX = "Shortcut:";
-
-    private static String getObjectName(Object o) {
+    private WidgetCacheKey getObjectKey(Object o, String size) {
         // should cache the string builder
-        StringBuilder sb = new StringBuilder();
-        String output;
-        if (o instanceof AppWidgetProviderInfo) {
-            sb.append(WIDGET_PREFIX);
-            sb.append(((AppWidgetProviderInfo) o).provider.flattenToString());
-            output = sb.toString();
-            sb.setLength(0);
-        } else {
-            sb.append(SHORTCUT_PREFIX);
-
-            ResolveInfo info = (ResolveInfo) o;
-            sb.append(new ComponentName(info.activityInfo.packageName,
-                    info.activityInfo.name).flattenToString());
-            output = sb.toString();
-            sb.setLength(0);
-        }
-        return output;
-    }
-
-    private String getObjectPackage(Object o) {
-        if (o instanceof AppWidgetProviderInfo) {
-            return ((AppWidgetProviderInfo) o).provider.getPackageName();
+        if (o instanceof LauncherAppWidgetProviderInfo) {
+            LauncherAppWidgetProviderInfo info = (LauncherAppWidgetProviderInfo) o;
+            return new WidgetCacheKey(info.provider, mManager.getUser(info), size);
         } else {
             ResolveInfo info = (ResolveInfo) o;
-            return info.activityInfo.packageName;
+            return new WidgetCacheKey(
+                    new ComponentName(info.activityInfo.packageName, info.activityInfo.name),
+                    UserHandleCompat.myUserHandle(), size);
         }
     }
 
-    private void writeToDb(Object o, Bitmap preview) {
-        String name = getObjectName(o);
-        SQLiteDatabase db = mDb.getWritableDatabase();
+    @Thunk void writeToDb(WidgetCacheKey key, long[] versions, Bitmap preview) {
         ContentValues values = new ContentValues();
+        values.put(CacheDb.COLUMN_COMPONENT, key.componentName.flattenToShortString());
+        values.put(CacheDb.COLUMN_USER, mUserManager.getSerialNumberForUser(key.user));
+        values.put(CacheDb.COLUMN_SIZE, key.size);
+        values.put(CacheDb.COLUMN_PACKAGE, key.componentName.getPackageName());
+        values.put(CacheDb.COLUMN_VERSION, versions[0]);
+        values.put(CacheDb.COLUMN_LAST_UPDATED, versions[1]);
+        values.put(CacheDb.COLUMN_PREVIEW_BITMAP, Utilities.flattenBitmap(preview));
 
-        values.put(CacheDb.COLUMN_NAME, name);
-        ByteArrayOutputStream stream = new ByteArrayOutputStream();
-        preview.compress(Bitmap.CompressFormat.PNG, 100, stream);
-        values.put(CacheDb.COLUMN_PREVIEW_BITMAP, stream.toByteArray());
-        values.put(CacheDb.COLUMN_SIZE, mSize);
         try {
-            db.insert(CacheDb.TABLE_NAME, null, values);
-        } catch (SQLiteDiskIOException e) {
-            recreateDb();
+            mDb.getWritableDatabase().insertWithOnConflict(CacheDb.TABLE_NAME, null, values,
+                    SQLiteDatabase.CONFLICT_REPLACE);
+        } catch (SQLException e) {
+            Log.e(TAG, "Error saving image to DB", e);
         }
     }
 
-    private void clearDb() {
-        SQLiteDatabase db = mDb.getWritableDatabase();
-        // Delete everything
+    public void removePackage(String packageName, UserHandleCompat user) {
+        removePackage(packageName, user, mUserManager.getSerialNumberForUser(user));
+    }
+
+    private void removePackage(String packageName, UserHandleCompat user, long userSerial) {
+        synchronized(mPackageVersions) {
+            mPackageVersions.remove(packageName);
+        }
+
         try {
-            db.delete(CacheDb.TABLE_NAME, null, null);
-        } catch (SQLiteDiskIOException e) {
+            mDb.getWritableDatabase().delete(CacheDb.TABLE_NAME,
+                    CacheDb.COLUMN_PACKAGE + " = ? AND " + CacheDb.COLUMN_USER + " = ?",
+                    new String[] {packageName, Long.toString(userSerial)});
+        } catch (SQLException e) {
+            Log.e(TAG, "Unable to delete items from DB", e);
         }
     }
 
-    public static void removePackageFromDb(final CacheDb cacheDb, final String packageName) {
-        synchronized(sInvalidPackages) {
-            sInvalidPackages.add(packageName);
+    /**
+     * Updates the persistent DB:
+     *   1. Any preview generated for an old package version is removed
+     *   2. Any preview for an absent package is removed
+     * This ensures that we remove entries for packages which changed while the launcher was dead.
+     */
+    public void removeObsoletePreviews(ArrayList<Object> list) {
+        Utilities.assertWorkerThread();
+
+        LongSparseArray<HashSet<String>> validPackages = new LongSparseArray<>();
+
+        for (Object obj : list) {
+            final UserHandleCompat user;
+            final String pkg;
+            if (obj instanceof ResolveInfo) {
+                user = UserHandleCompat.myUserHandle();
+                pkg = ((ResolveInfo) obj).activityInfo.packageName;
+            } else {
+                LauncherAppWidgetProviderInfo info = (LauncherAppWidgetProviderInfo) obj;
+                user = mManager.getUser(info);
+                pkg = info.provider.getPackageName();
+            }
+
+            final long userId = mUserManager.getSerialNumberForUser(user);
+            HashSet<String> packages = validPackages.get(userId);
+            if (packages == null) {
+                packages = new HashSet<>();
+                validPackages.put(userId, packages);
+            }
+            packages.add(pkg);
         }
-        new AsyncTask<Void, Void, Void>() {
-            public Void doInBackground(Void ... args) {
-                SQLiteDatabase db = cacheDb.getWritableDatabase();
+
+        LongSparseArray<HashSet<String>> packagesToDelete = new LongSparseArray<>();
+        Cursor c = null;
+        try {
+            c = mDb.getReadableDatabase().query(CacheDb.TABLE_NAME,
+                    new String[] {CacheDb.COLUMN_USER, CacheDb.COLUMN_PACKAGE,
+                        CacheDb.COLUMN_LAST_UPDATED, CacheDb.COLUMN_VERSION},
+                    null, null, null, null, null);
+            while (c.moveToNext()) {
+                long userId = c.getLong(0);
+                String pkg = c.getString(1);
+                long lastUpdated = c.getLong(2);
+                long version = c.getLong(3);
+
+                HashSet<String> packages = validPackages.get(userId);
+                if (packages != null && packages.contains(pkg)) {
+                    long[] versions = getPackageVersion(pkg);
+                    if (versions[0] == version && versions[1] == lastUpdated) {
+                        // Every thing checks out
+                        continue;
+                    }
+                }
+
+                // We need to delete this package.
+                packages = packagesToDelete.get(userId);
+                if (packages == null) {
+                    packages = new HashSet<>();
+                    packagesToDelete.put(userId, packages);
+                }
+                packages.add(pkg);
+            }
+
+            for (int i = 0; i < packagesToDelete.size(); i++) {
+                long userId = packagesToDelete.keyAt(i);
+                UserHandleCompat user = mUserManager.getUserForSerialNumber(userId);
+                for (String pkg : packagesToDelete.valueAt(i)) {
+                    removePackage(pkg, user, userId);
+                }
+            }
+        } catch (SQLException e) {
+            Log.e(TAG, "Error updatating widget previews", e);
+        } finally {
+            if (c != null) {
+                c.close();
+            }
+        }
+    }
+
+    /**
+     * Reads the preview bitmap from the DB or null if the preview is not in the DB.
+     */
+    @Thunk Bitmap readFromDb(WidgetCacheKey key, Bitmap recycle, PreviewLoadTask loadTask) {
+        Cursor cursor = null;
+        try {
+            cursor = mDb.getReadableDatabase().query(
+                    CacheDb.TABLE_NAME,
+                    new String[] { CacheDb.COLUMN_PREVIEW_BITMAP },
+                    CacheDb.COLUMN_COMPONENT + " = ? AND " + CacheDb.COLUMN_USER + " = ? AND " + CacheDb.COLUMN_SIZE + " = ?",
+                    new String[] {
+                            key.componentName.flattenToString(),
+                            Long.toString(mUserManager.getSerialNumberForUser(key.user)),
+                            key.size
+                    },
+                    null, null, null);
+            // If cancelled, skip getting the blob and decoding it into a bitmap
+            if (loadTask.isCancelled()) {
+                return null;
+            }
+            if (cursor.moveToNext()) {
+                byte[] blob = cursor.getBlob(0);
+                BitmapFactory.Options opts = new BitmapFactory.Options();
+                opts.inBitmap = recycle;
                 try {
-                    db.delete(CacheDb.TABLE_NAME,
-                            CacheDb.COLUMN_NAME + " LIKE ? OR " +
-                            CacheDb.COLUMN_NAME + " LIKE ?", // SELECT query
-                            new String[] {
-                                    WIDGET_PREFIX + packageName + "/%",
-                                    SHORTCUT_PREFIX + packageName + "/%"
-                            } // args to SELECT query
-                    );
-                } catch (SQLiteDiskIOException e) {
+                    if (!loadTask.isCancelled()) {
+                        return BitmapFactory.decodeByteArray(blob, 0, blob.length, opts);
+                    }
+                } catch (Exception e) {
+                    return null;
                 }
-                synchronized(sInvalidPackages) {
-                    sInvalidPackages.remove(packageName);
-                }
-                return null;
             }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, (Void) null);
+        } catch (SQLException e) {
+            Log.w(TAG, "Error loading preview from DB", e);
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+        return null;
     }
 
-    public static void removeItemFromDb(final CacheDb cacheDb, final String objectName) {
-        new AsyncTask<Void, Void, Void>() {
-            public Void doInBackground(Void ... args) {
-                SQLiteDatabase db = cacheDb.getWritableDatabase();
-                try {
-                    db.delete(CacheDb.TABLE_NAME,
-                            CacheDb.COLUMN_NAME + " = ? ", // SELECT query
-                            new String[] { objectName }); // args to SELECT query
-                } catch (SQLiteDiskIOException e) {
-                }
-                return null;
-            }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, (Void) null);
-    }
-
-    private Bitmap readFromDb(String name, Bitmap b) {
-        if (mCachedSelectQuery == null) {
-            mCachedSelectQuery = CacheDb.COLUMN_NAME + " = ? AND " +
-                    CacheDb.COLUMN_SIZE + " = ?";
-        }
-        SQLiteDatabase db = mDb.getReadableDatabase();
-        Cursor result;
-        try {
-            result = db.query(CacheDb.TABLE_NAME,
-                    new String[] { CacheDb.COLUMN_PREVIEW_BITMAP }, // cols to return
-                    mCachedSelectQuery, // select query
-                    new String[] { name, mSize }, // args to select query
-                    null,
-                    null,
-                    null,
-                    null);
-        } catch (SQLiteDiskIOException e) {
-            recreateDb();
-            return null;
-        }
-        if (result.getCount() > 0) {
-            result.moveToFirst();
-            byte[] blob = result.getBlob(0);
-            result.close();
-            final BitmapFactory.Options opts = mCachedBitmapFactoryOptions.get();
-            opts.inBitmap = b;
-            opts.inSampleSize = 1;
-            try {
-                return BitmapFactory.decodeByteArray(blob, 0, blob.length, opts);
-            } catch (IllegalArgumentException e) {
-                removeItemFromDb(mDb, name);
-                return null;
-            }
+    @Thunk Bitmap generatePreview(Launcher launcher, Object info, Bitmap recycle,
+            int previewWidth, int previewHeight) {
+        if (info instanceof LauncherAppWidgetProviderInfo) {
+            return generateWidgetPreview(launcher, (LauncherAppWidgetProviderInfo) info,
+                    previewWidth, recycle, null);
         } else {
-            result.close();
-            return null;
+            return generateShortcutPreview(launcher,
+                    (ResolveInfo) info, previewWidth, previewHeight, recycle);
         }
     }
 
-    public Bitmap generatePreview(Object info, Bitmap preview) {
-        if (preview != null &&
-                (preview.getWidth() != mPreviewBitmapWidth ||
-                preview.getHeight() != mPreviewBitmapHeight)) {
-            throw new RuntimeException("Improperly sized bitmap passed as argument");
-        }
-        if (info instanceof AppWidgetProviderInfo) {
-            return generateWidgetPreview((AppWidgetProviderInfo) info, preview);
-        } else {
-            return generateShortcutPreview(
-                    (ResolveInfo) info, mPreviewBitmapWidth, mPreviewBitmapHeight, preview);
-        }
-    }
-
-    public Bitmap generateWidgetPreview(AppWidgetProviderInfo info, Bitmap preview) {
-        int[] cellSpans = Launcher.getSpanForWidget(mContext, info);
-        int maxWidth = maxWidthForWidgetPreview(cellSpans[0]);
-        int maxHeight = maxHeightForWidgetPreview(cellSpans[1]);
-        return generateWidgetPreview(info.provider, info.previewImage, info.icon,
-                cellSpans[0], cellSpans[1], maxWidth, maxHeight, preview, null);
-    }
-
-    public int maxWidthForWidgetPreview(int spanX) {
-        return Math.min(mPreviewBitmapWidth,
-                mWidgetSpacingLayout.estimateCellWidth(spanX));
-    }
-
-    public int maxHeightForWidgetPreview(int spanY) {
-        return Math.min(mPreviewBitmapHeight,
-                mWidgetSpacingLayout.estimateCellHeight(spanY));
-    }
-
-    public Bitmap generateWidgetPreview(ComponentName provider, int previewImage,
-            int iconId, int cellHSpan, int cellVSpan, int maxPreviewWidth, int maxPreviewHeight,
-            Bitmap preview, int[] preScaledWidthOut) {
+    public Bitmap generateWidgetPreview(Launcher launcher, LauncherAppWidgetProviderInfo info,
+            int maxPreviewWidth, Bitmap preview, int[] preScaledWidthOut) {
         // Load the preview image if possible
-        String packageName = provider.getPackageName();
         if (maxPreviewWidth < 0) maxPreviewWidth = Integer.MAX_VALUE;
-        if (maxPreviewHeight < 0) maxPreviewHeight = Integer.MAX_VALUE;
 
         Drawable drawable = null;
-        if (previewImage != 0) {
-            drawable = mPackageManager.getDrawable(packageName, previewImage, null);
-            if (drawable == null) {
+        if (info.previewImage != 0) {
+            drawable = mManager.loadPreview(info);
+            if (drawable != null) {
+                drawable = mutateOnMainThread(drawable);
+            } else {
                 Log.w(TAG, "Can't load widget preview drawable 0x" +
-                        Integer.toHexString(previewImage) + " for provider: " + provider);
+                        Integer.toHexString(info.previewImage) + " for provider: " + info.provider);
             }
         }
+
+        final boolean widgetPreviewExists = (drawable != null);
+        final int spanX = info.spanX;
+        final int spanY = info.spanY;
 
         int previewWidth;
         int previewHeight;
-        Bitmap defaultPreview = null;
-        boolean widgetPreviewExists = (drawable != null);
+        Bitmap tileBitmap = null;
+
         if (widgetPreviewExists) {
             previewWidth = drawable.getIntrinsicWidth();
             previewHeight = drawable.getIntrinsicHeight();
         } else {
             // Generate a preview image if we couldn't load one
-            if (cellHSpan < 1) cellHSpan = 1;
-            if (cellVSpan < 1) cellVSpan = 1;
-
-            BitmapDrawable previewDrawable = (BitmapDrawable) mContext.getResources()
-                    .getDrawable(R.drawable.widget_tile);
-            final int previewDrawableWidth = previewDrawable
-                    .getIntrinsicWidth();
-            final int previewDrawableHeight = previewDrawable
-                    .getIntrinsicHeight();
-            previewWidth = previewDrawableWidth * cellHSpan;
-            previewHeight = previewDrawableHeight * cellVSpan;
-
-            defaultPreview = Bitmap.createBitmap(previewWidth, previewHeight,
-                    Config.ARGB_8888);
-            final Canvas c = mCachedAppWidgetPreviewCanvas.get();
-            c.setBitmap(defaultPreview);
-            previewDrawable.setBounds(0, 0, previewWidth, previewHeight);
-            previewDrawable.setTileModeXY(Shader.TileMode.REPEAT,
-                    Shader.TileMode.REPEAT);
-            previewDrawable.draw(c);
-            c.setBitmap(null);
-
-            // Draw the icon in the top left corner
-            int minOffset = (int) (mAppIconSize * sWidgetPreviewIconPaddingPercentage);
-            int smallestSide = Math.min(previewWidth, previewHeight);
-            float iconScale = Math.min((float) smallestSide
-                    / (mAppIconSize + 2 * minOffset), 1f);
-
-            try {
-                Drawable icon = null;
-                int hoffset =
-                        (int) ((previewDrawableWidth - mAppIconSize * iconScale) / 2);
-                int yoffset =
-                        (int) ((previewDrawableHeight - mAppIconSize * iconScale) / 2);
-                if (iconId > 0)
-                    icon = mIconCache.getFullResIcon(packageName, iconId);
-                if (icon != null) {
-                    renderDrawableToBitmap(icon, defaultPreview, hoffset,
-                            yoffset, (int) (mAppIconSize * iconScale),
-                            (int) (mAppIconSize * iconScale));
-                }
-            } catch (Resources.NotFoundException e) {
-            }
+            tileBitmap = ((BitmapDrawable) mContext.getResources().getDrawable(
+                    R.drawable.widget_tile)).getBitmap();
+            previewWidth = tileBitmap.getWidth() * spanX;
+            previewHeight = tileBitmap.getHeight() * spanY;
         }
 
         // Scale to fit width only - let the widget preview be clipped in the
@@ -560,7 +384,7 @@ public class WidgetPreviewLoader {
             preScaledWidthOut[0] = previewWidth;
         }
         if (previewWidth > maxPreviewWidth) {
-            scale = maxPreviewWidth / (float) previewWidth;
+            scale = (maxPreviewWidth - 2 * mProfileBadgeMargin) / (float) (previewWidth);
         }
         if (scale != 1f) {
             previewWidth = (int) (scale * previewWidth);
@@ -568,108 +392,315 @@ public class WidgetPreviewLoader {
         }
 
         // If a bitmap is passed in, we use it; otherwise, we create a bitmap of the right size
+        final Canvas c = new Canvas();
         if (preview == null) {
             preview = Bitmap.createBitmap(previewWidth, previewHeight, Config.ARGB_8888);
+            c.setBitmap(preview);
+        } else {
+            // Reusing bitmap. Clear it.
+            c.setBitmap(preview);
+            c.drawColor(0, PorterDuff.Mode.CLEAR);
         }
 
         // Draw the scaled preview into the final bitmap
         int x = (preview.getWidth() - previewWidth) / 2;
         if (widgetPreviewExists) {
-            renderDrawableToBitmap(drawable, preview, x, 0, previewWidth,
-                    previewHeight);
+            drawable.setBounds(x, 0, x + previewWidth, previewHeight);
+            drawable.draw(c);
         } else {
-            final Canvas c = mCachedAppWidgetPreviewCanvas.get();
-            final Rect src = mCachedAppWidgetPreviewSrcRect.get();
-            final Rect dest = mCachedAppWidgetPreviewDestRect.get();
-            c.setBitmap(preview);
-            src.set(0, 0, defaultPreview.getWidth(), defaultPreview.getHeight());
-            dest.set(x, 0, x + previewWidth, previewHeight);
+            final Paint p = new Paint();
+            p.setFilterBitmap(true);
+            int appIconSize = launcher.getDeviceProfile().iconSizePx;
 
-            Paint p = mCachedAppWidgetPreviewPaint.get();
-            if (p == null) {
-                p = new Paint();
-                p.setFilterBitmap(true);
-                mCachedAppWidgetPreviewPaint.set(p);
+            // draw the spanX x spanY tiles
+            final Rect src = new Rect(0, 0, tileBitmap.getWidth(), tileBitmap.getHeight());
+
+            float tileW = scale * tileBitmap.getWidth();
+            float tileH = scale * tileBitmap.getHeight();
+            final RectF dst = new RectF(0, 0, tileW, tileH);
+
+            float tx = x;
+            for (int i = 0; i < spanX; i++, tx += tileW) {
+                float ty = 0;
+                for (int j = 0; j < spanY; j++, ty += tileH) {
+                    dst.offsetTo(tx, ty);
+                    c.drawBitmap(tileBitmap, src, dst, p);
+                }
             }
-            c.drawBitmap(defaultPreview, src, dest, p);
+
+            // Draw the icon in the top left corner
+            // TODO: use top right for RTL
+            int minOffset = (int) (appIconSize * WIDGET_PREVIEW_ICON_PADDING_PERCENTAGE);
+            int smallestSide = Math.min(previewWidth, previewHeight);
+            float iconScale = Math.min((float) smallestSide / (appIconSize + 2 * minOffset), scale);
+
+            try {
+                Drawable icon = mutateOnMainThread(mManager.loadIcon(info, mIconCache));
+                if (icon != null) {
+                    int hoffset = (int) ((tileW - appIconSize * iconScale) / 2) + x;
+                    int yoffset = (int) ((tileH - appIconSize * iconScale) / 2);
+                    icon.setBounds(hoffset, yoffset,
+                            hoffset + (int) (appIconSize * iconScale),
+                            yoffset + (int) (appIconSize * iconScale));
+                    icon.draw(c);
+                }
+            } catch (Resources.NotFoundException e) { }
             c.setBitmap(null);
         }
-        return preview;
+        int imageHeight = Math.min(preview.getHeight(), previewHeight + mProfileBadgeMargin);
+        return mManager.getBadgeBitmap(info, preview, imageHeight);
     }
 
     private Bitmap generateShortcutPreview(
-            ResolveInfo info, int maxWidth, int maxHeight, Bitmap preview) {
-        Bitmap tempBitmap = mCachedShortcutPreviewBitmap.get();
-        final Canvas c = mCachedShortcutPreviewCanvas.get();
-        if (tempBitmap == null ||
-                tempBitmap.getWidth() != maxWidth ||
-                tempBitmap.getHeight() != maxHeight) {
-            tempBitmap = Bitmap.createBitmap(maxWidth, maxHeight, Config.ARGB_8888);
-            mCachedShortcutPreviewBitmap.set(tempBitmap);
-        } else {
-            c.setBitmap(tempBitmap);
-            c.drawColor(0, PorterDuff.Mode.CLEAR);
-            c.setBitmap(null);
-        }
-        // Render the icon
-        Drawable icon = mIconCache.getFullResIcon(info);
-
-        int paddingTop = mContext.
-                getResources().getDimensionPixelOffset(R.dimen.shortcut_preview_padding_top);
-        int paddingLeft = mContext.
-                getResources().getDimensionPixelOffset(R.dimen.shortcut_preview_padding_left);
-        int paddingRight = mContext.
-                getResources().getDimensionPixelOffset(R.dimen.shortcut_preview_padding_right);
-
-        int scaledIconWidth = (maxWidth - paddingLeft - paddingRight);
-
-        renderDrawableToBitmap(
-                icon, tempBitmap, paddingLeft, paddingTop, scaledIconWidth, scaledIconWidth);
-
-        if (preview != null &&
-                (preview.getWidth() != maxWidth || preview.getHeight() != maxHeight)) {
-            throw new RuntimeException("Improperly sized bitmap passed as argument");
-        } else if (preview == null) {
+            Launcher launcher, ResolveInfo info, int maxWidth, int maxHeight, Bitmap preview) {
+        final Canvas c = new Canvas();
+        if (preview == null) {
             preview = Bitmap.createBitmap(maxWidth, maxHeight, Config.ARGB_8888);
+            c.setBitmap(preview);
+        } else if (preview.getWidth() != maxWidth || preview.getHeight() != maxHeight) {
+            throw new RuntimeException("Improperly sized bitmap passed as argument");
+        } else {
+            // Reusing bitmap. Clear it.
+            c.setBitmap(preview);
+            c.drawColor(0, PorterDuff.Mode.CLEAR);
         }
 
-        c.setBitmap(preview);
+        Drawable icon = mutateOnMainThread(mIconCache.getFullResIcon(info.activityInfo));
+        icon.setFilterBitmap(true);
+
         // Draw a desaturated/scaled version of the icon in the background as a watermark
-        Paint p = mCachedShortcutPreviewPaint.get();
-        if (p == null) {
-            p = new Paint();
-            ColorMatrix colorMatrix = new ColorMatrix();
-            colorMatrix.setSaturation(0);
-            p.setColorFilter(new ColorMatrixColorFilter(colorMatrix));
-            p.setAlpha((int) (255 * 0.06f));
-            mCachedShortcutPreviewPaint.set(p);
-        }
-        c.drawBitmap(tempBitmap, 0, 0, p);
+        ColorMatrix colorMatrix = new ColorMatrix();
+        colorMatrix.setSaturation(0);
+        icon.setColorFilter(new ColorMatrixColorFilter(colorMatrix));
+        icon.setAlpha((int) (255 * 0.06f));
+
+        Resources res = mContext.getResources();
+        int paddingTop = res.getDimensionPixelOffset(R.dimen.shortcut_preview_padding_top);
+        int paddingLeft = res.getDimensionPixelOffset(R.dimen.shortcut_preview_padding_left);
+        int paddingRight = res.getDimensionPixelOffset(R.dimen.shortcut_preview_padding_right);
+        int scaledIconWidth = (maxWidth - paddingLeft - paddingRight);
+        icon.setBounds(paddingLeft, paddingTop,
+                paddingLeft + scaledIconWidth, paddingTop + scaledIconWidth);
+        icon.draw(c);
+
+        // Draw the final icon at top left corner.
+        // TODO: use top right for RTL
+        int appIconSize = launcher.getDeviceProfile().iconSizePx;
+
+        icon.setAlpha(255);
+        icon.setColorFilter(null);
+        icon.setBounds(0, 0, appIconSize, appIconSize);
+        icon.draw(c);
+
         c.setBitmap(null);
-
-        renderDrawableToBitmap(icon, preview, 0, 0, mAppIconSize, mAppIconSize);
-
         return preview;
     }
 
-
-    public static void renderDrawableToBitmap(
-            Drawable d, Bitmap bitmap, int x, int y, int w, int h) {
-        renderDrawableToBitmap(d, bitmap, x, y, w, h, 1f);
-    }
-
-    private static void renderDrawableToBitmap(
-            Drawable d, Bitmap bitmap, int x, int y, int w, int h,
-            float scale) {
-        if (bitmap != null) {
-            Canvas c = new Canvas(bitmap);
-            c.scale(scale, scale);
-            Rect oldBounds = d.copyBounds();
-            d.setBounds(x, y, x + w, y + h);
-            d.draw(c);
-            d.setBounds(oldBounds); // Restore the bounds
-            c.setBitmap(null);
+    private Drawable mutateOnMainThread(final Drawable drawable) {
+        try {
+            return mMainThreadExecutor.submit(new Callable<Drawable>() {
+                @Override
+                public Drawable call() throws Exception {
+                    return drawable.mutate();
+                }
+            }).get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
         }
     }
 
+    /**
+     * @return an array of containing versionCode and lastUpdatedTime for the package.
+     */
+    @Thunk long[] getPackageVersion(String packageName) {
+        synchronized (mPackageVersions) {
+            long[] versions = mPackageVersions.get(packageName);
+            if (versions == null) {
+                versions = new long[2];
+                try {
+                    PackageInfo info = mContext.getPackageManager().getPackageInfo(packageName, 0);
+                    versions[0] = info.versionCode;
+                    versions[1] = info.lastUpdateTime;
+                } catch (NameNotFoundException e) {
+                    Log.e(TAG, "PackageInfo not found", e);
+                }
+                mPackageVersions.put(packageName, versions);
+            }
+            return versions;
+        }
+    }
+
+    /**
+     * A request Id which can be used by the client to cancel any request.
+     */
+    public class PreviewLoadRequest {
+
+        @Thunk final PreviewLoadTask mTask;
+
+        public PreviewLoadRequest(PreviewLoadTask task) {
+            mTask = task;
+        }
+
+        public void cleanup() {
+            if (mTask != null) {
+                mTask.cancel(true);
+            }
+
+            // This only handles the case where the PreviewLoadTask is cancelled after the task has
+            // successfully completed (including having written to disk when necessary).  In the
+            // other cases where it is cancelled while the task is running, it will be cleaned up
+            // in the tasks's onCancelled() call, and if cancelled while the task is writing to
+            // disk, it will be cancelled in the task's onPostExecute() call.
+            if (mTask.mBitmapToRecycle != null) {
+                mWorkerHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        synchronized (mUnusedBitmaps) {
+                            mUnusedBitmaps.add(mTask.mBitmapToRecycle);
+                        }
+                        mTask.mBitmapToRecycle = null;
+                    }
+                });
+            }
+        }
+    }
+
+    public class PreviewLoadTask extends AsyncTask<Void, Void, Bitmap> {
+        @Thunk final WidgetCacheKey mKey;
+        private final Object mInfo;
+        private final int mPreviewHeight;
+        private final int mPreviewWidth;
+        private final WidgetCell mCaller;
+        @Thunk long[] mVersions;
+        @Thunk Bitmap mBitmapToRecycle;
+
+        PreviewLoadTask(WidgetCacheKey key, Object info, int previewWidth,
+                int previewHeight, WidgetCell caller) {
+            mKey = key;
+            mInfo = info;
+            mPreviewHeight = previewHeight;
+            mPreviewWidth = previewWidth;
+            mCaller = caller;
+            if (DEBUG) {
+                Log.d(TAG, String.format("%s, %s, %d, %d",
+                        mKey, mInfo, mPreviewHeight, mPreviewWidth));
+            }
+        }
+
+        @Override
+        protected Bitmap doInBackground(Void... params) {
+            Bitmap unusedBitmap = null;
+
+            // If already cancelled before this gets to run in the background, then return early
+            if (isCancelled()) {
+                return null;
+            }
+            synchronized (mUnusedBitmaps) {
+                // Check if we can re-use a bitmap
+                for (Bitmap candidate : mUnusedBitmaps) {
+                    if (candidate != null && candidate.isMutable() &&
+                            candidate.getWidth() == mPreviewWidth &&
+                            candidate.getHeight() == mPreviewHeight) {
+                        unusedBitmap = candidate;
+                        mUnusedBitmaps.remove(unusedBitmap);
+                        break;
+                    }
+                }
+            }
+
+            // creating a bitmap is expensive. Do not do this inside synchronized block.
+            if (unusedBitmap == null) {
+                unusedBitmap = Bitmap.createBitmap(mPreviewWidth, mPreviewHeight, Config.ARGB_8888);
+            }
+            // If cancelled now, don't bother reading the preview from the DB
+            if (isCancelled()) {
+                return unusedBitmap;
+            }
+            Bitmap preview = readFromDb(mKey, unusedBitmap, this);
+            // Only consider generating the preview if we have not cancelled the task already
+            if (!isCancelled() && preview == null) {
+                // Fetch the version info before we generate the preview, so that, in-case the
+                // app was updated while we are generating the preview, we use the old version info,
+                // which would gets re-written next time.
+                mVersions = getPackageVersion(mKey.componentName.getPackageName());
+
+                Launcher launcher = (Launcher) mCaller.getContext();
+
+                // it's not in the db... we need to generate it
+                preview = generatePreview(launcher, mInfo, unusedBitmap, mPreviewWidth, mPreviewHeight);
+            }
+            return preview;
+        }
+
+        @Override
+        protected void onPostExecute(final Bitmap preview) {
+            mCaller.applyPreview(preview);
+
+            // Write the generated preview to the DB in the worker thread
+            if (mVersions != null) {
+                mWorkerHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!isCancelled()) {
+                            // If we are still using this preview, then write it to the DB and then
+                            // let the normal clear mechanism recycle the bitmap
+                            writeToDb(mKey, mVersions, preview);
+                            mBitmapToRecycle = preview;
+                        } else {
+                            // If we've already cancelled, then skip writing the bitmap to the DB
+                            // and manually add the bitmap back to the recycled set
+                            synchronized (mUnusedBitmaps) {
+                                mUnusedBitmaps.add(preview);
+                            }
+                        }
+                    }
+                });
+            } else {
+                // If we don't need to write to disk, then ensure the preview gets recycled by
+                // the normal clear mechanism
+                mBitmapToRecycle = preview;
+            }
+        }
+
+        @Override
+        protected void onCancelled(final Bitmap preview) {
+            // If we've cancelled while the task is running, then can return the bitmap to the
+            // recycled set immediately. Otherwise, it will be recycled after the preview is written
+            // to disk.
+            if (preview != null) {
+                mWorkerHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        synchronized (mUnusedBitmaps) {
+                            mUnusedBitmaps.add(preview);
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    private static final class WidgetCacheKey extends ComponentKey {
+
+        // TODO: remove dependency on size
+        @Thunk final String size;
+
+        public WidgetCacheKey(ComponentName componentName, UserHandleCompat user, String size) {
+            super(componentName, user);
+            this.size = size;
+        }
+
+        @Override
+        public int hashCode() {
+            return super.hashCode() ^ size.hashCode();
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return super.equals(o) && ((WidgetCacheKey) o).size.equals(size);
+        }
+    }
 }

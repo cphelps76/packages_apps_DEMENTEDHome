@@ -23,32 +23,51 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE_TAGS := optional
 
-LOCAL_STATIC_JAVA_LIBRARIES := android-support-v13
+LOCAL_STATIC_JAVA_LIBRARIES := \
+    android-support-v4 \
+    android-support-v7-recyclerview \
+    org.cyanogenmod.platform.internal
+
 
 LOCAL_SRC_FILES := $(call all-java-files-under, src) \
     $(call all-java-files-under, WallpaperPicker/src) \
-    $(call all-renderscript-files-under, src) \
     $(call all-proto-files-under, protos)
-LOCAL_RESOURCE_DIR := $(LOCAL_PATH)/WallpaperPicker/res $(LOCAL_PATH)/res
 
-LOCAL_AAPT_FLAGS := --auto-add-overlay
+LOCAL_RESOURCE_DIR := $(LOCAL_PATH)/WallpaperPicker/res \
+    $(LOCAL_PATH)/res \
+    $(LOCAL_PATH)/../../../prebuilts/sdk/current/support/v7/recyclerview/res
+
+LOCAL_PROGUARD_FLAG_FILES := proguard.flags
 
 LOCAL_PROTOC_OPTIMIZE_TYPE := nano
 LOCAL_PROTOC_FLAGS := --proto_path=$(LOCAL_PATH)/protos/
+LOCAL_AAPT_FLAGS := \
+    --auto-add-overlay \
+    --extra-packages android.support.v7.recyclerview
 
-# LOCAL_SDK_VERSION := 19
-
+#LOCAL_SDK_VERSION := current
 LOCAL_PACKAGE_NAME := DEMENTEDHome
 LOCAL_PRIVILEGED_MODULE := true
 #LOCAL_CERTIFICATE := shared
 
-LOCAL_OVERRIDES_PACKAGES := Launcher2
+LOCAL_OVERRIDES_PACKAGES := Launcher3
 
 LOCAL_PROGUARD_FLAG_FILES := proguard.flags
+LOCAL_PROGUARD_ENABLED := full
+
+REMOTE_FOLDER_UPDATER ?= $(LOCAL_PATH)/RemoteFolder
+include $(REMOTE_FOLDER_UPDATER)/Android.mk
 
 include $(BUILD_PACKAGE)
 
-include $(call all-makefiles-under,$(LOCAL_PATH))
+include $(CLEAR_VARS)
+
+REMOTE_FOLDER_UPDATER ?= $(LOCAL_PATH)/RemoteFolder
+include $(REMOTE_FOLDER_UPDATER)/Android-prebuilt-libs.mk
+
+include $(BUILD_MULTI_PREBUILT)
+
+include $(CLEAR_VARS)
 
 #
 # Protocol Buffer Debug Utility in Java
@@ -65,9 +84,9 @@ LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE := launcher_protoutil_lib
 LOCAL_IS_HOST_MODULE := true
 LOCAL_JAR_MANIFEST := util/etc/manifest.txt
-LOCAL_STATIC_JAVA_LIBRARIES := host-libprotobuf-java-2.3.0-nano
 
 include $(BUILD_HOST_JAVA_LIBRARY)
+
 
 #
 # Protocol Buffer Debug Utility Wrapper Script
@@ -80,10 +99,12 @@ LOCAL_MODULE := launcher_protoutil
 
 include $(BUILD_SYSTEM)/base_rules.mk
 
-$(LOCAL_BUILT_MODULE): launcher_protoutil_lib
+$(LOCAL_BUILT_MODULE): | $(HOST_OUT_JAVA_LIBRARIES)/launcher_protoutil_lib.jar
 $(LOCAL_BUILT_MODULE): $(LOCAL_PATH)/util/etc/launcher_protoutil | $(ACP)
 	@echo "Copy: $(PRIVATE_MODULE) ($@)"
 	$(copy-file-to-new-target)
 	$(hide) chmod 755 $@
 
 INTERNAL_DALVIK_MODULES += $(LOCAL_INSTALLED_MODULE)
+
+include $(call all-makefiles-under,$(LOCAL_PATH))

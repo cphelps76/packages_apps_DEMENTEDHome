@@ -17,50 +17,58 @@
 package com.android.cphelps76;
 
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageInfo;
-import android.content.pm.PackageManager;
-import android.content.pm.PackageManager.NameNotFoundException;
-import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.util.Log;
 
+import com.android.cphelps76.compat.LauncherActivityInfoCompat;
+import com.android.cphelps76.compat.UserHandleCompat;
+import com.android.cphelps76.compat.UserManagerCompat;
+import com.android.cphelps76.util.ComponentKey;
+
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Arrays;
 
 /**
  * Represents an app in AllAppsView.
  */
-class AppInfo extends ItemInfo {
-    private static final String TAG = "Launcher3.AppInfo";
+public class AppInfo extends ItemInfo {
+    private static final String TAG = "cphelps76.AppInfo";
 
     /**
      * The intent used to start the application.
      */
-    Intent intent;
+    public Intent intent;
 
     /**
      * A bitmap version of the application icon.
      */
-    Bitmap iconBitmap;
+    public Bitmap iconBitmap;
+
+    /**
+     * Indicates whether we're using a low res icon
+     */
+    boolean usingLowResIcon;
 
     /**
      * The time at which the app was first installed.
      */
     long firstInstallTime;
 
-    ComponentName componentName;
+    public ComponentName componentName;
 
-    static final int DOWNLOADED_FLAG = 1;
+    public static final int DOWNLOADED_FLAG = 1;
     static final int UPDATED_SYSTEM_APP_FLAG = 2;
+    static final int REMOTE_APP_FLAG = 4;
 
-    int flags = 0;
+    public int flags = 0;
 
     AppInfo() {
         itemType = LauncherSettings.BaseLauncherColumns.ITEM_TYPE_SHORTCUT;
     }
 
-    protected Intent getIntent() {
+    public Intent getIntent() {
         return intent;
     }
 
@@ -71,28 +79,30 @@ class AppInfo extends ItemInfo {
     /**
      * Must not hold the Context.
      */
-    public AppInfo(PackageManager pm, ResolveInfo info, IconCache iconCache,
-            HashMap<Object, CharSequence> labelCache) {
-        final String packageName = info.activityInfo.applicationInfo.packageName;
-
-        this.componentName = new ComponentName(packageName, info.activityInfo.name);
+    public AppInfo(Context context, LauncherActivityInfoCompat info, UserHandleCompat user,
+            IconCache iconCache) {
+        this.componentName = info.getComponentName();
         this.container = ItemInfo.NO_ID;
-        this.setActivity(componentName,
-                Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
 
-        try {
-            PackageInfo pi = pm.getPackageInfo(packageName, 0);
-            flags = initFlags(pi);
-            firstInstallTime = initFirstInstallTime(pi);
-        } catch (NameNotFoundException e) {
-            Log.d(TAG, "PackageManager.getApplicationInfo failed for " + packageName);
-        }
-
-        iconCache.getTitleAndIcon(this, info, labelCache);
+        flags = initFlags(info);
+        firstInstallTime = info.getFirstInstallTime();
+        // Using the full res icon on init might need to be made configurable for low spec devices.
+        iconCache.getTitleAndIcon(this, info, false /* useLowResIcon */);
+        intent = makeLaunchIntent(context, info, user);
+        this.user = user;
     }
 
-    public static int initFlags(PackageInfo pi) {
-        int appFlags = pi.applicationInfo.flags;
+    public AppInfo(Intent intent, String title, UserHandleCompat user) {
+        this.componentName = intent.getComponent();
+        this.container = ItemInfo.NO_ID;
+
+        this.intent = intent;
+        this.title = title;
+        this.user = user;
+    }
+
+    public static int initFlags(LauncherActivityInfoCompat info) {
+        int appFlags = info.getApplicationInfo().flags;
         int flags = 0;
         if ((appFlags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0) {
             flags |= DOWNLOADED_FLAG;
@@ -104,52 +114,83 @@ class AppInfo extends ItemInfo {
         return flags;
     }
 
-    public static long initFirstInstallTime(PackageInfo pi) {
-        return pi.firstInstallTime;
-    }
-
     public AppInfo(AppInfo info) {
         super(info);
         componentName = info.componentName;
-        title = info.title.toString();
+        title = Utilities.trim(info.title);
         intent = new Intent(info.intent);
         flags = info.flags;
         firstInstallTime = info.firstInstallTime;
+        iconBitmap = info.iconBitmap;
     }
 
     /**
-     * Creates the application intent based on a component name and various launch flags.
-     * Sets {@link #itemType} to {@link LauncherSettings.BaseLauncherColumns#ITEM_TYPE_APPLICATION}.
-     *
-     * @param className the class name of the component representing the intent
-     * @param launchFlags the launch flags
+     * Check if this app has a specific flag.
+     * @param flag flag to check.
+     * @return true if the flag is present, false otherwise.
      */
-    final void setActivity(ComponentName className, int launchFlags) {
-        intent = new Intent(Intent.ACTION_MAIN);
-        intent.addCategory(Intent.CATEGORY_LAUNCHER);
-        intent.setComponent(className);
-        intent.setFlags(launchFlags);
-        itemType = LauncherSettings.BaseLauncherColumns.ITEM_TYPE_APPLICATION;
+    public boolean hasFlag(int flag) {
+        return (flags & flag) != 0;
+    }
+
+    /**
+     * Set a flag for this app
+     * @param flag flag to apply.
+     */
+    public void setFlag(int flag) {
+        flags |= flag;
     }
 
     @Override
     public String toString() {
-        return "ApplicationInfo(title=" + title.toString() + " id=" + this.id
+        return "ApplicationInfo(title=" + title + " id=" + this.id
                 + " type=" + this.itemType + " container=" + this.container
                 + " screen=" + screenId + " cellX=" + cellX + " cellY=" + cellY
-                + " spanX=" + spanX + " spanY=" + spanY + " dropPos=" + dropPos + ")";
+                + " spanX=" + spanX + " spanY=" + spanY + " dropPos=" + Arrays.toString(dropPos)
+                + " user=" + user + ")";
     }
 
+    /**
+     * Helper method used for debugging.
+     */
     public static void dumpApplicationInfoList(String tag, String label, ArrayList<AppInfo> list) {
         Log.d(tag, label + " size=" + list.size());
         for (AppInfo info: list) {
-            Log.d(tag, "   title=\"" + info.title + "\" iconBitmap="
-                    + info.iconBitmap + " firstInstallTime="
-                    + info.firstInstallTime);
+            Log.d(tag, "   title=\"" + info.title + "\" iconBitmap=" + info.iconBitmap 
+                    + " firstInstallTime=" + info.firstInstallTime
+                    + " componentName=" + info.componentName.getPackageName());
         }
     }
 
     public ShortcutInfo makeShortcut() {
         return new ShortcutInfo(this);
+    }
+
+    public ComponentKey toComponentKey() {
+        return new ComponentKey(componentName, user);
+    }
+
+    public static Intent makeLaunchIntent(Context context, LauncherActivityInfoCompat info,
+            UserHandleCompat user) {
+        long serialNumber = UserManagerCompat.getInstance(context).getSerialNumberForUser(user);
+        return new Intent(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_LAUNCHER)
+            .setComponent(info.getComponentName())
+            .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+            .putExtra(EXTRA_PROFILE, serialNumber);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (o != null && o instanceof AppInfo) {
+            return componentName.equals(((AppInfo) o).componentName);
+        } else {
+            return false;
+        }
+    }
+
+    @Override
+    public int hashCode() {
+        return componentName.hashCode();
     }
 }

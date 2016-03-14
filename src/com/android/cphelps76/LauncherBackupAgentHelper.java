@@ -17,22 +17,27 @@
 package com.android.cphelps76;
 
 import android.app.backup.BackupAgentHelper;
+import android.app.backup.BackupDataInput;
 import android.app.backup.BackupManager;
-import android.app.backup.SharedPreferencesBackupHelper;
 import android.content.Context;
-import android.content.SharedPreferences;
-import android.provider.Settings;
+import android.database.Cursor;
+import android.os.ParcelFileDescriptor;
 import android.util.Log;
+
+import com.android.cphelps76.model.MigrateFromRestoreTask;
+
+import java.io.IOException;
 
 public class LauncherBackupAgentHelper extends BackupAgentHelper {
 
     private static final String TAG = "LauncherBackupAgentHelper";
-    static final boolean VERBOSE = true;
+
+    private static final String LAUNCHER_DATA_PREFIX = "L";
+
+    static final boolean VERBOSE = false;
     static final boolean DEBUG = false;
 
     private static BackupManager sBackupManager;
-
-    protected static final String SETTING_RESTORE_ENABLED = "launcher_restore_enabled";
 
     /**
      * Notify the backup manager that out database is dirty.
@@ -48,27 +53,62 @@ public class LauncherBackupAgentHelper extends BackupAgentHelper {
         sBackupManager.dataChanged();
     }
 
-    @Override
-    public void onDestroy() {
-        // There is only one process accessing this preference file, but the restore
-        // modifies the file outside the normal codepaths, so it looks like another
-        // process.  This forces a reload of the file, in case this process persists.
-        String spKey = LauncherAppState.getSharedPreferencesKey();
-        SharedPreferences sp = getSharedPreferences(spKey, Context.MODE_MULTI_PROCESS);
-        super.onDestroy();
-    }
+    private LauncherBackupHelper mHelper;
 
     @Override
     public void onCreate() {
-        boolean restoreEnabled = 0 != Settings.Secure.getInt(
-                getContentResolver(), SETTING_RESTORE_ENABLED, 0);
-        if (VERBOSE) Log.v(TAG, "restore is " + (restoreEnabled ? "enabled" : "disabled"));
+        super.onCreate();
+        mHelper = new LauncherBackupHelper(this);
+        addHelper(LAUNCHER_DATA_PREFIX, mHelper);
+    }
 
-        addHelper(LauncherBackupHelper.LAUNCHER_PREFS_PREFIX,
-                new LauncherPreferencesBackupHelper(this,
-                        LauncherAppState.getSharedPreferencesKey(),
-                        restoreEnabled));
-        addHelper(LauncherBackupHelper.LAUNCHER_PREFIX,
-                new LauncherBackupHelper(this, restoreEnabled));
+    @Override
+    public void onRestore(BackupDataInput data, int appVersionCode, ParcelFileDescriptor newState)
+            throws IOException {
+        if (!Utilities.ATLEAST_LOLLIPOP) {
+            // No restore for old devices.
+            Log.i(TAG, "You shall not pass!!!");
+            Log.d(TAG, "Restore is only supported on devices running Lollipop and above.");
+            return;
+        }
+
+        // Clear dB before restore
+        LauncherAppState.getLauncherProvider().createEmptyDB();
+
+        boolean hasData;
+        try {
+            super.onRestore(data, appVersionCode, newState);
+            // If no favorite was migrated, clear the data and start fresh.
+            final Cursor c = getContentResolver().query(
+                    LauncherSettings.Favorites.CONTENT_URI, null, null, null, null);
+            hasData = c.moveToNext();
+            c.close();
+        } catch (Exception e) {
+            // If the restore fails, we should do a fresh start.
+            Log.e(TAG, "Restore failed", e);
+            hasData = false;
+        }
+
+        if (hasData && mHelper.restoreSuccessful) {
+            LauncherAppState.getLauncherProvider().clearFlagEmptyDbCreated();
+            LauncherClings.synchonouslyMarkFirstRunClingDismissed(this);
+
+            // Rank was added in v4.
+            if (mHelper.restoredBackupVersion <= 3) {
+                LauncherAppState.getLauncherProvider().updateFolderItemsRank();
+            }
+
+            if (MigrateFromRestoreTask.ENABLED && mHelper.shouldAttemptWorkspaceMigration()) {
+                MigrateFromRestoreTask.markForMigration(getApplicationContext(),
+                        (int) mHelper.migrationCompatibleProfileData.desktopCols,
+                        (int) mHelper.migrationCompatibleProfileData.desktopRows,
+                        mHelper.widgetSizes);
+            }
+
+            LauncherAppState.getLauncherProvider().convertShortcutsToLauncherActivities();
+        } else {
+            if (VERBOSE) Log.v(TAG, "Nothing was restored, clearing DB");
+            LauncherAppState.getLauncherProvider().createEmptyDB();
+        }
     }
 }

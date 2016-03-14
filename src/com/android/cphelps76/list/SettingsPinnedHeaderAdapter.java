@@ -2,28 +2,42 @@ package com.android.cphelps76.list;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.Cursor;
-import android.graphics.Typeface;
-import android.util.TypedValue;
+import android.os.Bundle;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.View.OnClickListener;
 import android.view.ViewGroup;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
-import com.android.cphelps76.DeviceProfile;
+import com.android.cphelps76.InvariantDeviceProfile;
 import com.android.cphelps76.Launcher;
+import com.android.cphelps76.LauncherSettings;
 import com.android.cphelps76.OverviewSettingsPanel;
-import com.android.cphelps76.AppsCustomizePagedView;
 import com.android.cphelps76.R;
-
+import com.android.cphelps76.Utilities;
 import com.android.cphelps76.settings.SettingsProvider;
-import android.view.View.OnClickListener;
-import android.content.SharedPreferences;
 
 public class SettingsPinnedHeaderAdapter extends PinnedHeaderListAdapter {
+    public static final String ACTION_SEARCH_BAR_VISIBILITY_CHANGED =
+            "cyanogenmod.intent.action.SEARCH_BAR_VISIBILITY_CHANGED";
+
     private Launcher mLauncher;
     private Context mContext;
+
+    class SettingsPosition {
+        int partition = 0;
+        int position = 0;
+
+        SettingsPosition (int partition, int position) {
+            this.partition = partition;
+            this.position = position;
+        }
+    }
 
     public SettingsPinnedHeaderAdapter(Context context) {
         super(context);
@@ -49,9 +63,6 @@ public class SettingsPinnedHeaderAdapter extends PinnedHeaderListAdapter {
     protected void bindHeaderView(View view, int partition, Cursor cursor) {
         TextView textView = (TextView) view.findViewById(R.id.item_name);
         textView.setText(mHeaders[partition]);
-        textView.setTypeface(textView.getTypeface(), Typeface.BOLD);
-
-        textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
     }
 
     @Override
@@ -63,99 +74,136 @@ public class SettingsPinnedHeaderAdapter extends PinnedHeaderListAdapter {
 
     @Override
     protected void bindView(View v, int partition, Cursor cursor, int position) {
-        TextView text = (TextView)v.findViewById(R.id.item_name);
+        TextView nameView = (TextView)v.findViewById(R.id.item_name);
+        TextView stateView = (TextView)v.findViewById(R.id.item_state);
+        Switch settingSwitch = (Switch)v.findViewById(R.id.setting_switch);
+        settingSwitch.setClickable(false);
+
+        // RTL
+        Configuration config = mLauncher.getResources().getConfiguration();
+        if (config.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
+            nameView.setGravity(Gravity.RIGHT);
+        }
+
         String title = cursor.getString(1);
-        text.setText(title);
+        nameView.setText(title);
+
+        v.setTag(new SettingsPosition(partition, position));
 
         Resources res = mLauncher.getResources();
 
-        if (title.equals(res
-                .getString(R.string.home_screen_search_text))) {
-            boolean current = mLauncher.isSearchBarEnabled();
-            String state = current ? res.getString(
-                    R.string.setting_state_on) : res.getString(
-                    R.string.setting_state_off);
-            ((TextView) v.findViewById(R.id.item_state)).setText(state);
-        } else if (title.equals(res
-                .getString(R.string.drawer_sorting_text))) {
-            updateDrawerSortSettingsItem(v);
-        } else if (title.equals(res
-                .getString(R.string.scroll_effect_text)) &&
-                partition == OverviewSettingsPanel.DRAWER_SETTINGS_POSITION) {
-            String state = mLauncher.getAppsCustomizeTransitionEffect();
-            state = mapEffectToValue(state);
-            ((TextView) v.findViewById(R.id.item_state)).setText(state);
-        } else if (title.equals(res
-                .getString(R.string.scroll_effect_text)) &&
-                partition == OverviewSettingsPanel.HOME_SETTINGS_POSITION) {
-            String state = mLauncher.getWorkspaceTransitionEffect();
-            state = mapEffectToValue(state);
-            ((TextView) v.findViewById(R.id.item_state)).setText(state);
-        } else if (title.equals(res
-                .getString(R.string.larger_icons_text))) {
-            boolean current = SettingsProvider
-                    .getBoolean(
-                            mContext,
-                            SettingsProvider.SETTINGS_UI_GENERAL_ICONS_LARGE,
-                            R.bool.preferences_interface_general_icons_large_default);
-            String state = current ? res.getString(
-                    R.string.setting_state_on) : res.getString(
-                    R.string.setting_state_off);
-            ((TextView) v.findViewById(R.id.item_state)).setText(state);
-        } else if (title.equals(res
-                .getString(R.string.icon_labels)) &&
-                partition == OverviewSettingsPanel.HOME_SETTINGS_POSITION) {
-            boolean current = mLauncher.shouldHideWorkspaceIconLables();
-            String state = current ? res.getString(
-                    R.string.icon_labels_hide) : res.getString(
-                    R.string.icon_labels_show);
-            ((TextView) v.findViewById(R.id.item_state)).setText(state);
-        } else if (title.equals(res
-                .getString(R.string.icon_labels)) &&
-                partition == OverviewSettingsPanel.DRAWER_SETTINGS_POSITION) {
-            boolean current = SettingsProvider
-                    .getBoolean(
-                            mContext,
-                            SettingsProvider.SETTINGS_UI_DRAWER_HIDE_ICON_LABELS,
-                            R.bool.preferences_interface_drawer_hide_icon_labels_default);
-            String state = current ? res.getString(
-                    R.string.icon_labels_hide) : res.getString(
-                    R.string.icon_labels_show);
-            ((TextView) v.findViewById(R.id.item_state)).setText(state);
-        } else if (title.equals(res
-                .getString(R.string.search_screen_left_text))) {
-            boolean current = SettingsProvider
-                    .getBoolean(
-                            mContext,
-                            SettingsProvider.SETTINGS_UI_HOMESCREEN_SEARCH_SCREEN_LEFT,
-                            R.bool.preferences_interface_homescreen_search_screen_left_default);
-            String state = current ? res.getString(
-                    R.string.setting_state_on) : res.getString(
-                    R.string.setting_state_off);
-            ((TextView) v.findViewById(R.id.item_state)).setText(state);
-        } else if (title.equals(res.getString(R.string.scrolling_wallpaper))) {
-            boolean current = SettingsProvider
-                    .getBoolean(
-                            mContext,
-                            SettingsProvider.SETTINGS_UI_HOMESCREEN_SCROLLING_WALLPAPER_SCROLL,
-                            R.bool.preferences_interface_homescreen_scrolling_wallpaper_scroll_default);
-            String state = current ? res.getString(
-                    R.string.setting_state_on) : res.getString(
-                    R.string.setting_state_off);
-            ((TextView) v.findViewById(R.id.item_state)).setText(state);
-        } else if (title.equals(res.getString(R.string.homescreen_rotation))) {
-            boolean current = mLauncher.isRotationEnabled();
-            String state = current ? res.getString(
-                    R.string.setting_state_on) : res.getString(
-                    R.string.setting_state_off);
-            ((TextView) v.findViewById(R.id.item_state)).setText(state);
-        } else if (title.equals(res.getString(R.string.grid_size_text))) {
-            updateDynamicGridSizeSettingsItem(v);
-        } else {
-            ((TextView) v.findViewById(R.id.item_state)).setText("");
+        boolean current;
+        String state;
+
+        switch (partition) {
+            case OverviewSettingsPanel.HOME_SETTINGS_POSITION:
+                switch (position) {
+                    case 0:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_HOMESCREEN_SEARCH,
+                                R.bool.preferences_interface_homescreen_search_default);
+                        setSettingSwitch(stateView, settingSwitch, current);
+                        break;
+                    case 1:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_HOMESCREEN_HIDE_ICON_LABELS,
+                                R.bool.preferences_interface_homescreen_hide_icon_labels_default);
+                        // Reversed logic here. Boolean is hideLabels, where setting is show labels
+                        setSettingSwitch(stateView, settingSwitch, !current);
+                        break;
+                    case 2:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_HOMESCREEN_SCROLLING_WALLPAPER_SCROLL,
+                                R.bool.preferences_interface_homescreen_scrolling_wallpaper_scroll_default);
+                        setSettingSwitch(stateView, settingSwitch, current);
+                        break;
+                    case 3:
+                        updateDynamicGridSizeSettingsItem(stateView, settingSwitch);
+                        break;
+                    case 4:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_ALLOW_ROTATION,
+                                R.bool.preferences_interface_allow_rotation);
+                        setSettingSwitch(stateView, settingSwitch, current);
+                        break;
+                    case 5:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_HOMESCREEN_REMOTE_FOLDER,
+                                R.bool.preferences_interface_homescreen_remote_folder_default);
+                        setSettingSwitch(stateView, settingSwitch, current);
+                        break;
+                    default:
+                        hideStates(stateView, settingSwitch);
+                }
+                break;
+            case OverviewSettingsPanel.DRAWER_SETTINGS_POSITION:
+                switch (position) {
+                    case 0:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_DRAWER_HIDE_ICON_LABELS,
+                                R.bool.preferences_interface_drawer_hide_icon_labels_default);
+                        // Reversed logic here. Boolean is hideLabels, where setting is show labels
+                        setSettingSwitch(stateView, settingSwitch, !current);
+                        break;
+                    case 1:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_DRAWER_STYLE_USE_COMPACT,
+                                R.bool.preferences_interface_drawer_compact_default);
+                        state = current ? res.getString(R.string.app_drawer_style_compact)
+                                : res.getString(R.string.app_drawer_style_sections);
+                        setStateText(stateView, settingSwitch, state);
+                        break;
+                    case 2:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_DRAWER_DARK,
+                                R.bool.preferences_interface_drawer_dark_default);
+                        state = current ? res.getString(R.string.app_drawer_color_dark)
+                                : res.getString(R.string.app_drawer_color_light);
+                        setStateText(stateView, settingSwitch, state);
+                        break;
+                    case 3:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_USE_SCROLLER,
+                                R.bool.preferences_interface_use_scroller_default);
+                        setSettingSwitch(stateView, settingSwitch, current);
+                        break;
+                    case 4:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_USE_HORIZONTAL_SCRUBBER,
+                                R.bool.preferences_interface_use_horizontal_scrubber_default);
+                        state = current ? res.getString(R.string.fast_scroller_type_horizontal)
+                                : res.getString(R.string.fast_scroller_type_vertical);
+                        setStateText(stateView, settingSwitch, state);
+                        break;
+                    case 5:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_DRAWER_SEARCH,
+                                R.bool.preferences_interface_drawer_search_default);
+                        setSettingSwitch(stateView, settingSwitch, current);
+                        break;
+                    case 6:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_DRAWER_REMOTE_APPS,
+                                R.bool.preferences_interface_drawer_remote_apps_default);
+                        setSettingSwitch(stateView, settingSwitch, current);
+                        break;
+                    default:
+                        hideStates(stateView, settingSwitch);
+                }
+                break;
+            case OverviewSettingsPanel.APP_SETTINGS_POSITION:
+                switch (position) {
+                    case 0:
+                        current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_GENERAL_ICONS_LARGE,
+                                R.bool.preferences_interface_general_icons_large_default);
+                        setSettingSwitch(stateView, settingSwitch, current);
+                        break;
+                    default:
+                        hideStates(stateView, settingSwitch);
+                }
         }
 
-        v.setTag(partition);
         v.setOnClickListener(mSettingsItemListener);
     }
 
@@ -174,28 +222,10 @@ public class SettingsPinnedHeaderAdapter extends PinnedHeaderListAdapter {
         return mPinnedHeaderCount;
     }
 
-    public void updateDrawerSortSettingsItem(View v) {
-        String state = "";
-        switch (mLauncher.getAppsCustomizeContentSortMode()) {
-            case Title:
-                state = mLauncher.getResources().getString(R.string.sort_mode_title);
-                break;
-            case LaunchCount:
-                state = mLauncher.getResources().getString(
-                        R.string.sort_mode_launch_count);
-                break;
-            case InstallTime:
-                state = mLauncher.getResources().getString(
-                        R.string.sort_mode_install_time);
-                break;
-        }
-        ((TextView) v.findViewById(R.id.item_state)).setText(state);
-    }
-
-    public void updateDynamicGridSizeSettingsItem(View v) {
-        DeviceProfile.GridSize gridSize = DeviceProfile.GridSize.getModeForValue(
+    public void updateDynamicGridSizeSettingsItem(TextView stateView, Switch settingSwitch) {
+        InvariantDeviceProfile.GridSize gridSize = InvariantDeviceProfile.GridSize.getModeForValue(
                 SettingsProvider.getIntCustomDefault(mLauncher,
-                SettingsProvider.SETTINGS_UI_DYNAMIC_GRID_SIZE, 0));
+                        SettingsProvider.SETTINGS_UI_DYNAMIC_GRID_SIZE, 0));
         String state = "";
 
         switch (gridSize) {
@@ -216,118 +246,134 @@ public class SettingsPinnedHeaderAdapter extends PinnedHeaderListAdapter {
                 state = rows + " " + "\u00d7" + " " + columns;
                 break;
         }
-        ((TextView) v.findViewById(R.id.item_state)).setText(state);
-    }
-
-    private String mapEffectToValue(String effect) {
-        final String[] titles = mLauncher.getResources().getStringArray(
-                R.array.transition_effect_entries);
-        final String[] values = mLauncher.getResources().getStringArray(
-                R.array.transition_effect_values);
-
-        int length = values.length;
-        for (int i = 0; i < length; i++) {
-            if (effect.equals(values[i])) {
-                return titles[i];
-            }
-        }
-        return "";
+        setStateText(stateView, settingSwitch, state);
     }
 
     OnClickListener mSettingsItemListener = new OnClickListener() {
 
         @Override
         public void onClick(View v) {
-            // TODO Auto-generated method stub
-            String value = ((TextView) v.findViewById(R.id.item_name)).getText().toString();
-            Resources res = mLauncher.getResources();
+            int partition = ((SettingsPosition) v.getTag()).partition;
+            int position = ((SettingsPosition) v.getTag()).position;
 
-            // Handle toggles or launch pickers
-            if (value.equals(res
-                    .getString(R.string.home_screen_search_text))) {
-                onSettingsBooleanChanged(
-                        v,
-                        SettingsProvider.SETTINGS_UI_HOMESCREEN_SEARCH,
-                        R.bool.preferences_interface_homescreen_search_default);
-                mLauncher.setUpdateDynamicGrid();
-            } else if (value.equals(res
-                    .getString(R.string.drawer_sorting_text))) {
-                onClickTransitionEffectButton();
-            } else if (value.equals(res
-                    .getString(R.string.scroll_effect_text)) &&
-                    ((Integer)v.getTag() == OverviewSettingsPanel.DRAWER_SETTINGS_POSITION)) {
-                mLauncher.onClickTransitionEffectButton(v, true);
-            } else if (value.equals(res
-                    .getString(R.string.scroll_effect_text)) &&
-                    ((Integer)v.getTag() == OverviewSettingsPanel.HOME_SETTINGS_POSITION)) {
-                mLauncher.onClickTransitionEffectButton(v, false);
-            } else if (value.equals(res
-                    .getString(R.string.larger_icons_text))) {
-                onSettingsBooleanChanged(
-                        v,
-                        SettingsProvider.SETTINGS_UI_GENERAL_ICONS_LARGE,
-                        R.bool.preferences_interface_general_icons_large_default);
-                mLauncher.setUpdateDynamicGrid();
-            } else if (value.equals(res
-                    .getString(R.string.icon_labels)) &&
-                    ((Integer)v.getTag() == OverviewSettingsPanel.HOME_SETTINGS_POSITION)) {
-                onIconLabelsBooleanChanged(
-                        v,
-                        SettingsProvider.SETTINGS_UI_HOMESCREEN_HIDE_ICON_LABELS,
-                        R.bool.preferences_interface_homescreen_hide_icon_labels_default);
-                mLauncher.setUpdateDynamicGrid();
-            } else if (value.equals(res
-                    .getString(R.string.icon_labels)) &&
-                    ((Integer)v.getTag() == OverviewSettingsPanel.DRAWER_SETTINGS_POSITION)) {
-                onIconLabelsBooleanChanged(
-                        v,
-                        SettingsProvider.SETTINGS_UI_DRAWER_HIDE_ICON_LABELS,
-                        R.bool.preferences_interface_drawer_hide_icon_labels_default);
-                mLauncher.setUpdateDynamicGrid();
-            } else if (value.equals(res.getString(R.string.protected_app_settings))) {
-                Intent intent = new Intent();
-                intent.setClassName(OverviewSettingsPanel.ANDROID_SETTINGS,
-                        OverviewSettingsPanel.ANDROID_PROTECTED_APPS);
-                mLauncher.startActivity(intent);
-            } else if (value.equals(res
-                    .getString(R.string.scrolling_wallpaper))) {
-                onSettingsBooleanChanged(
-                        v,
-                        SettingsProvider.SETTINGS_UI_HOMESCREEN_SCROLLING_WALLPAPER_SCROLL,
-                        R.bool.preferences_interface_homescreen_scrolling_wallpaper_scroll_default);
-                mLauncher.setUpdateDynamicGrid();
-            } else if (value.equals(res
-                    .getString(R.string.homescreen_rotation))) {
-                onSettingsBooleanChanged(
-                        v,
-                        SettingsProvider.SETTINGS_UI_HOMESCREEN_ROTATION,
-                        R.bool.preferences_interface_homescreen_rotation_default);
-                mLauncher.setUpdateDynamicGrid();
-            } else if (value.equals(res
-                    .getString(R.string.search_screen_left_text)) &&
-                    ((Integer)v.getTag() == OverviewSettingsPanel.HOME_SETTINGS_POSITION)) {
+            switch (partition) {
+                case OverviewSettingsPanel.HOME_SETTINGS_POSITION:
+                    switch (position) {
+                        case 0:
+                            updateSearchBarVisibility(v);
+                            break;
+                        case 1:
+                            onSettingsBooleanChanged(v,
+                                    SettingsProvider.SETTINGS_UI_HOMESCREEN_HIDE_ICON_LABELS,
+                                    R.bool.preferences_interface_homescreen_hide_icon_labels_default,
+                                    true);
+                            mLauncher.reloadLauncher(false, false);
+                            break;
+                        case 2:
+                            onSettingsBooleanChanged(v,
+                                    SettingsProvider
+                                            .SETTINGS_UI_HOMESCREEN_SCROLLING_WALLPAPER_SCROLL,
+                                    R.bool.preferences_interface_homescreen_scrolling_wallpaper_scroll_default,
+                                    false);
+                            mLauncher.reloadLauncher(false, false);
+                            break;
+                        case 3:
+                            mLauncher.onClickDynamicGridSizeButton();
+                            break;
+                        case 4:
+                            String key = SettingsProvider.SETTINGS_UI_ALLOW_ROTATION;
+                            boolean newValue = onSettingsBooleanChanged(v, key,
+                                    R.bool.preferences_interface_allow_rotation, false);
 
-                boolean current = SettingsProvider.getBoolean(mContext,
-                        SettingsProvider.SETTINGS_UI_HOMESCREEN_SEARCH_SCREEN_LEFT,
-                        R.bool.preferences_interface_homescreen_search_screen_left_default);
+                            Bundle extras = new Bundle();
+                            extras.putBoolean(LauncherSettings.Settings.EXTRA_VALUE, newValue);
 
-                // If GEL integration is not supported, do not allow the user to turn it on.
-                if(!current && !mLauncher.isGelIntegrationSupported()) {
-                    Toast.makeText(mLauncher.getApplicationContext(),
-                            res.getString(R.string.search_screen_left_unsupported_toast),
-                            Toast.LENGTH_SHORT).show();
-                } else {
-                    onSettingsBooleanChanged(
-                            v,
-                            SettingsProvider.SETTINGS_UI_HOMESCREEN_SEARCH_SCREEN_LEFT,
-                            R.bool.preferences_interface_homescreen_search_screen_left_default);
-                    mLauncher.restoreGelSetting();
-                    mLauncher.getWorkspace().updatePageScrollForCustomPage(!current);
-                    mLauncher.setUpdateDynamicGrid();
-                }
-            } else if (value.equals(res
-                    .getString(R.string.grid_size_text))) {
-                mLauncher.onClickDynamicGridSizeButton();
+                            // Required for system to pickup rotation change.
+                            mContext.getContentResolver().call(
+                                    LauncherSettings.Settings.CONTENT_URI,
+                                    LauncherSettings.Settings.METHOD_SET_BOOLEAN,
+                                    key, extras);
+
+                            break;
+                        case 5:
+                            onSettingsBooleanChanged(v,
+                                    SettingsProvider.SETTINGS_UI_HOMESCREEN_REMOTE_FOLDER,
+                                    R.bool.preferences_interface_homescreen_remote_folder_default,
+                                    false);
+                            mLauncher.getRemoteFolderManager().onSettingChanged();
+                            break;
+                    }
+                    break;
+                case OverviewSettingsPanel.DRAWER_SETTINGS_POSITION:
+                    switch (position) {
+                        case 0:
+                            onSettingsBooleanChanged(v,
+                                    SettingsProvider.SETTINGS_UI_DRAWER_HIDE_ICON_LABELS,
+                                    R.bool.preferences_interface_drawer_hide_icon_labels_default,
+                                    true);
+                            mLauncher.reloadAppDrawer();
+                            break;
+                        case 1:
+                            onTextSettingsBooleanChanged(v,
+                                    SettingsProvider.SETTINGS_UI_DRAWER_STYLE_USE_COMPACT,
+                                    R.bool.preferences_interface_drawer_compact_default,
+                                    R.string.app_drawer_style_compact,
+                                    R.string.app_drawer_style_sections);
+                            mLauncher.reloadAppDrawer();
+                            break;
+                        case 2:
+                            onTextSettingsBooleanChanged(v,
+                                    SettingsProvider.SETTINGS_UI_DRAWER_DARK,
+                                    R.bool.preferences_interface_drawer_dark_default,
+                                    R.string.app_drawer_color_dark,
+                                    R.string.app_drawer_color_light);
+                            mLauncher.reloadAppDrawer();
+                            break;
+                        case 3:
+                            onSettingsBooleanChanged(v,
+                                    SettingsProvider.SETTINGS_UI_USE_SCROLLER,
+                                    R.bool.preferences_interface_use_scroller_default, false);
+                            mLauncher.reloadAppDrawer();
+                            mLauncher.reloadWidgetView();
+                            break;
+                        case 4:
+                            onTextSettingsBooleanChanged(v,
+                                    SettingsProvider.SETTINGS_UI_USE_HORIZONTAL_SCRUBBER,
+                                    R.bool.preferences_interface_use_horizontal_scrubber_default,
+                                    R.string.fast_scroller_type_horizontal,
+                                    R.string.fast_scroller_type_vertical);
+                            mLauncher.reloadAppDrawer();
+                            mLauncher.reloadWidgetView();
+                            break;
+                        case 5:
+                            onSettingsBooleanChanged(v,
+                                    SettingsProvider.SETTINGS_UI_DRAWER_SEARCH,
+                                    R.bool.preferences_interface_drawer_search_default, false);
+                            mLauncher.reloadAppDrawer();
+                            break;
+                        case 6:
+                            onSettingsBooleanChanged(v,
+                                    SettingsProvider.SETTINGS_UI_DRAWER_REMOTE_APPS,
+                                    R.bool.preferences_interface_drawer_remote_apps_default, false);
+                            mLauncher.getRemoteFolderManager().onSettingChanged();
+                            break;
+                    }
+                    break;
+                case OverviewSettingsPanel.APP_SETTINGS_POSITION:
+                    switch (position) {
+                        case 0:
+                            onSettingsBooleanChanged(v,
+                                    SettingsProvider.SETTINGS_UI_GENERAL_ICONS_LARGE,
+                                    R.bool.preferences_interface_general_icons_large_default, false);
+                            mLauncher.reloadLauncher(true, true);
+                            break;
+                        case 1:
+                            Intent intent = new Intent();
+                            intent.setClassName(OverviewSettingsPanel.ANDROID_SETTINGS,
+                                    OverviewSettingsPanel.ANDROID_PROTECTED_APPS);
+                            mLauncher.startActivity(intent);
+                            break;
+                    }
             }
 
             View defaultHome = mLauncher.findViewById(R.id.default_home_screen_panel);
@@ -335,52 +381,54 @@ public class SettingsPinnedHeaderAdapter extends PinnedHeaderListAdapter {
         }
     };
 
-    private void onSettingsBooleanChanged(View v, String key, int res) {
-        boolean current = SettingsProvider.getBoolean(
-                mContext, key, res);
+    private void updateSearchBarVisibility(View v) {
+        boolean isSearchEnabled = SettingsProvider.getBoolean(mContext,
+                SettingsProvider.SETTINGS_UI_HOMESCREEN_SEARCH,
+                R.bool.preferences_interface_homescreen_search_default);
 
-        // Set new state
-        SharedPreferences sharedPref = SettingsProvider
-                .get(mContext);
-        sharedPref.edit().putBoolean(key, !current).commit();
-        sharedPref.edit()
-                .putBoolean(SettingsProvider.SETTINGS_CHANGED, true)
-                .commit();
+        if (!isSearchEnabled) {
+            if (!Utilities.searchActivityExists(mContext)) {
+                Toast.makeText(mContext, mContext.getString(R.string.search_activity_not_found),
+                        Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
 
-        String state = current ? mLauncher.getResources().getString(
-                R.string.setting_state_off) : mLauncher.getResources().getString(
-                R.string.setting_state_on);
+        onSettingsBooleanChanged(v,
+                SettingsProvider.SETTINGS_UI_HOMESCREEN_SEARCH,
+                R.bool.preferences_interface_homescreen_search_default, false);
+
+        Intent intent = new Intent(ACTION_SEARCH_BAR_VISIBILITY_CHANGED);
+        mContext.sendBroadcast(intent);
+    }
+
+    private boolean onSettingsBooleanChanged(View v, String key, int res, boolean invert) {
+        boolean newValue = SettingsProvider.changeBoolean(mContext, key, res);
+        ((Switch)v.findViewById(R.id.setting_switch)).setChecked(invert != newValue);
+        return newValue;
+    }
+
+    private void onTextSettingsBooleanChanged(View v, String key, int defRes,
+                                              int trueRes, int falseRes) {
+        boolean newValue = SettingsProvider.changeBoolean(mContext, key, defRes);
+        int state = newValue ? trueRes : falseRes;
         ((TextView) v.findViewById(R.id.item_state)).setText(state);
     }
 
-    private void onIconLabelsBooleanChanged(View v, String key, int res) {
-        boolean current = SettingsProvider.getBoolean(
-                mContext, key, res);
-
-        // Set new state
-        SharedPreferences sharedPref = SettingsProvider
-                .get(mContext);
-        sharedPref.edit().putBoolean(key, !current).commit();
-        sharedPref.edit()
-                .putBoolean(SettingsProvider.SETTINGS_CHANGED, true)
-                .commit();
-
-        String state = current ? mLauncher.getResources().getString(
-                R.string.icon_labels_show) : mLauncher.getResources().getString(
-                R.string.icon_labels_hide);
-        ((TextView) v.findViewById(R.id.item_state)).setText(state);
+    private void setStateText(TextView stateView, Switch settingSwitch, String state) {
+        stateView.setText(state);
+        stateView.setVisibility(View.VISIBLE);
+        settingSwitch.setVisibility(View.INVISIBLE);
     }
 
-    private void onClickTransitionEffectButton() {
-        int sort = SettingsProvider.getIntCustomDefault(mLauncher,
-                SettingsProvider.SETTINGS_UI_DRAWER_SORT_MODE, 0);
+    private void setSettingSwitch(TextView stateView, Switch settingSwitch, boolean isChecked) {
+        settingSwitch.setChecked(isChecked);
+        settingSwitch.setVisibility(View.VISIBLE);
+        stateView.setVisibility(View.INVISIBLE);
+    }
 
-        sort = (sort + 1) % AppsCustomizePagedView.SortMode.values().length;
-        mLauncher.getAppsCustomizeContent().setSortMode(
-                AppsCustomizePagedView.SortMode.getModeForValue(sort));
-
-        SettingsProvider.putInt(mLauncher, SettingsProvider.SETTINGS_UI_DRAWER_SORT_MODE, sort);
-
-        notifyDataSetChanged();
+    private void hideStates(TextView stateView, Switch settingSwitch) {
+        settingSwitch.setVisibility(View.INVISIBLE);
+        stateView.setVisibility(View.INVISIBLE);
     }
 }

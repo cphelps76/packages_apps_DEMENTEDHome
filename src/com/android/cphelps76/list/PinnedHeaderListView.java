@@ -161,7 +161,7 @@ public class PinnedHeaderListView extends AutoScrollListView
 
     @Override
     public void onScroll(AbsListView view, int firstVisibleItem, int visibleItemCount,
-            int totalItemCount) {
+                         int totalItemCount) {
         if (mAdapter != null) {
             int count = mAdapter.getPinnedHeaderCount();
             if (count != mSize) {
@@ -545,7 +545,7 @@ public class PinnedHeaderListView extends AutoScrollListView
             View view = header.view;
             int saveCount = canvas.save();
             canvas.translate(isLayoutRtl() ?
-                    getWidth() - mHeaderPaddingStart - mHeaderWidth : mHeaderPaddingStart,
+                            getWidth() - mHeaderPaddingStart - mHeaderWidth : mHeaderPaddingStart,
                     header.y);
             if (header.state == FADING) {
                 mBounds.set(0, 0, mHeaderWidth, view.getHeight());

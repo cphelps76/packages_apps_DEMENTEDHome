@@ -24,6 +24,8 @@ import android.view.View;
 import android.view.ViewPropertyAnimator;
 import android.view.ViewTreeObserver;
 
+import com.android.cphelps76.util.Thunk;
+
 /*
  *  This is a helper class that listens to updates from the corresponding animation.
  *  For the first two frames, it adjusts the current play time of the animation to
@@ -41,7 +43,7 @@ public class FirstFrameAnimatorHelper extends AnimatorListenerAdapter
     private boolean mAdjustedSecondFrameTime;
 
     private static ViewTreeObserver.OnDrawListener sGlobalDrawListener;
-    private static long sGlobalFrameCounter;
+    @Thunk static long sGlobalFrameCounter;
     private static boolean sVisible;
 
     public FirstFrameAnimatorHelper(ValueAnimator animator, View target) {
@@ -92,12 +94,14 @@ public class FirstFrameAnimatorHelper extends AnimatorListenerAdapter
         }
 
         final long currentPlayTime = animation.getCurrentPlayTime();
+        boolean isFinalFrame = Float.compare(1f, animation.getAnimatedFraction()) == 0;
+
         if (!mHandlingOnAnimationUpdate &&
             sVisible &&
-            // If the current play time exceeds the duration, the animation
-            // will get finished, even if we call setCurrentPlayTime -- therefore
+            // If the current play time exceeds the duration, or the animated fraction is 1,
+            // the animation will get finished, even if we call setCurrentPlayTime -- therefore
             // don't adjust the animation in that case
-            currentPlayTime < animation.getDuration()) {
+            currentPlayTime < animation.getDuration() && !isFinalFrame) {
             mHandlingOnAnimationUpdate = true;
             long frameNum = sGlobalFrameCounter - mStartFrame;
             // If we haven't drawn our first frame, reset the time to t = 0

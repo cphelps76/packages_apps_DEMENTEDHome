@@ -15,7 +15,7 @@
 -->
 <com.android.cphelps76.PageIndicator
     xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:launcher="http://schemas.android.com/apk/res-auto/com.android.cphelps76"
+    xmlns:launcher="http://schemas.android.com/apk/res-auto"
     android:animateLayoutChanges="true"
     launcher:windowSize="@integer/config_maxNumberOfPageIndicatorsToShow">
 </com.android.cphelps76.PageIndicator>

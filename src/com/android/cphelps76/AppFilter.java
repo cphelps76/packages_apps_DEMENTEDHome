@@ -31,4 +31,5 @@ public abstract class AppFilter {
             return null;
         }
     }
+
 }
