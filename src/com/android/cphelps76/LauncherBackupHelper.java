@@ -15,63 +15,74 @@
  */
 package com.android.cphelps76;
 
-import com.google.protobuf.nano.InvalidProtocolBufferNanoException;
-import com.google.protobuf.nano.MessageNano;
-
-import com.android.cphelps76.LauncherSettings.Favorites;
-import com.android.cphelps76.LauncherSettings.WorkspaceScreens;
-import com.android.cphelps76.backup.BackupProtos;
-import com.android.cphelps76.backup.BackupProtos.CheckedMessage;
-import com.android.cphelps76.backup.BackupProtos.Favorite;
-import com.android.cphelps76.backup.BackupProtos.Journal;
-import com.android.cphelps76.backup.BackupProtos.Key;
-import com.android.cphelps76.backup.BackupProtos.Resource;
-import com.android.cphelps76.backup.BackupProtos.Screen;
-import com.android.cphelps76.backup.BackupProtos.Widget;
-
 import android.app.backup.BackupDataInputStream;
 import android.app.backup.BackupDataOutput;
 import android.app.backup.BackupHelper;
 import android.app.backup.BackupManager;
-import android.appwidget.AppWidgetManager;
-import android.appwidget.AppWidgetProviderInfo;
 import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.pm.ResolveInfo;
+import android.content.res.XmlResourceParser;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Point;
 import android.graphics.drawable.Drawable;
 import android.os.ParcelFileDescriptor;
 import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
 
-import java.io.ByteArrayOutputStream;
+import com.android.cphelps76.LauncherSettings.Favorites;
+import com.android.cphelps76.LauncherSettings.WorkspaceScreens;
+import com.android.cphelps76.backup.BackupProtos;
+import com.android.cphelps76.backup.BackupProtos.CheckedMessage;
+import com.android.cphelps76.backup.BackupProtos.DeviceProfieData;
+import com.android.cphelps76.backup.BackupProtos.Favorite;
+import com.android.cphelps76.backup.BackupProtos.Journal;
+import com.android.cphelps76.backup.BackupProtos.Key;
+import com.android.cphelps76.backup.BackupProtos.Resource;
+import com.android.cphelps76.backup.BackupProtos.Screen;
+import com.android.cphelps76.backup.BackupProtos.Widget;
+import com.android.cphelps76.compat.UserHandleCompat;
+import com.android.cphelps76.compat.UserManagerCompat;
+import com.android.cphelps76.model.MigrateFromRestoreTask;
+import com.android.cphelps76.util.Thunk;
+import com.google.protobuf.nano.InvalidProtocolBufferNanoException;
+import com.google.protobuf.nano.MessageNano;
+
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Arrays;
 import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
 import java.util.zip.CRC32;
 
 /**
  * Persist the launcher home state across calamities.
  */
 public class LauncherBackupHelper implements BackupHelper {
-
     private static final String TAG = "LauncherBackupHelper";
     private static final boolean VERBOSE = LauncherBackupAgentHelper.VERBOSE;
     private static final boolean DEBUG = LauncherBackupAgentHelper.DEBUG;
-    private static final boolean DEBUG_PAYLOAD = false;
 
+    private static final int BACKUP_VERSION = 4;
     private static final int MAX_JOURNAL_SIZE = 1000000;
+
+    // Journal key is such that it is always smaller than any dynamically generated
+    // key (any Base64 encoded string).
+    private static final String JOURNAL_KEY = "#";
 
     /** icons are large, dribble them out */
     private static final int MAX_ICONS_PER_PASS = 10;
@@ -79,35 +90,26 @@ public class LauncherBackupHelper implements BackupHelper {
     /** widgets contain previews, which are very large, dribble them out */
     private static final int MAX_WIDGETS_PER_PASS = 5;
 
-    public static final int IMAGE_COMPRESSION_QUALITY = 75;
-
-    public static final String LAUNCHER_PREFIX = "L";
-
-    public static final String LAUNCHER_PREFS_PREFIX = "LP";
-
-    private static final Bitmap.CompressFormat IMAGE_FORMAT =
-            android.graphics.Bitmap.CompressFormat.PNG;
-
-    private static BackupManager sBackupManager;
-
     private static final String[] FAVORITE_PROJECTION = {
-            Favorites._ID,                     // 0
-            Favorites.MODIFIED,                // 1
-            Favorites.INTENT,                  // 2
-            Favorites.APPWIDGET_PROVIDER,      // 3
-            Favorites.APPWIDGET_ID,            // 4
-            Favorites.CELLX,                   // 5
-            Favorites.CELLY,                   // 6
-            Favorites.CONTAINER,               // 7
-            Favorites.ICON,                    // 8
-            Favorites.ICON_PACKAGE,            // 9
-            Favorites.ICON_RESOURCE,           // 10
-            Favorites.ICON_TYPE,               // 11
-            Favorites.ITEM_TYPE,               // 12
-            Favorites.SCREEN,                  // 13
-            Favorites.SPANX,                   // 14
-            Favorites.SPANY,                   // 15
-            Favorites.TITLE,                   // 16
+        Favorites._ID,                     // 0
+        Favorites.MODIFIED,                // 1
+        Favorites.INTENT,                  // 2
+        Favorites.APPWIDGET_PROVIDER,      // 3
+        Favorites.APPWIDGET_ID,            // 4
+        Favorites.CELLX,                   // 5
+        Favorites.CELLY,                   // 6
+        Favorites.CONTAINER,               // 7
+        Favorites.ICON,                    // 8
+        Favorites.ICON_PACKAGE,            // 9
+        Favorites.ICON_RESOURCE,           // 10
+        Favorites.ICON_TYPE,               // 11
+        Favorites.ITEM_TYPE,               // 12
+        Favorites.SCREEN,                  // 13
+        Favorites.SPANX,                   // 14
+        Favorites.SPANY,                   // 15
+        Favorites.TITLE,                   // 16
+        Favorites.PROFILE_ID,              // 17
+        Favorites.RANK,                    // 18
     };
 
     private static final int ID_INDEX = 0;
@@ -127,35 +129,68 @@ public class LauncherBackupHelper implements BackupHelper {
     private static final int SPANX_INDEX = 14;
     private static final int SPANY_INDEX = 15;
     private static final int TITLE_INDEX = 16;
+    private static final int RANK_INDEX = 18;
 
     private static final String[] SCREEN_PROJECTION = {
-            WorkspaceScreens._ID,              // 0
-            WorkspaceScreens.MODIFIED,         // 1
-            WorkspaceScreens.SCREEN_RANK       // 2
+        WorkspaceScreens._ID,              // 0
+        WorkspaceScreens.MODIFIED,         // 1
+        WorkspaceScreens.SCREEN_RANK       // 2
     };
 
     private static final int SCREEN_RANK_INDEX = 2;
 
-    private static IconCache mIconCache;
+    @Thunk final Context mContext;
+    private final HashSet<String> mExistingKeys;
+    private final ArrayList<Key> mKeys;
+    private final ItemTypeMatcher[] mItemTypeMatchers;
+    private final long mUserSerial;
 
-    private final Context mContext;
+    private BackupManager mBackupManager;
+    private byte[] mBuffer = new byte[512];
+    private long mLastBackupRestoreTime;
+    private boolean mBackupDataWasUpdated;
 
-    private final boolean mRestoreEnabled;
+    private IconCache mIconCache;
+    private DeviceProfieData mDeviceProfileData;
+    private InvariantDeviceProfile mIdp;
 
-    private HashMap<ComponentName, AppWidgetProviderInfo> mWidgetMap;
+    DeviceProfieData migrationCompatibleProfileData;
+    HashSet<String> widgetSizes = new HashSet<>();
 
-    private ArrayList<Key> mKeys;
+    boolean restoreSuccessful;
+    int restoredBackupVersion = 1;
 
-    public LauncherBackupHelper(Context context, boolean restoreEnabled) {
+    // When migrating from a device which different hotseat configuration, the icons are shifted
+    // to center along the new all-apps icon.
+    private int mHotseatShift = 0;
+
+    public LauncherBackupHelper(Context context) {
         mContext = context;
-        mRestoreEnabled = restoreEnabled;
+        mExistingKeys = new HashSet<String>();
+        mKeys = new ArrayList<Key>();
+        restoreSuccessful = true;
+        mItemTypeMatchers = new ItemTypeMatcher[CommonAppTypeParser.SUPPORTED_TYPE_COUNT];
+
+        UserManagerCompat userManager = UserManagerCompat.getInstance(mContext);
+        mUserSerial = userManager.getSerialNumberForUser(UserHandleCompat.myUserHandle());
     }
 
     private void dataChanged() {
-        if (sBackupManager == null) {
-            sBackupManager = new BackupManager(mContext);
+        if (mBackupManager == null) {
+            mBackupManager = new BackupManager(mContext);
         }
-        sBackupManager.dataChanged();
+        mBackupManager.dataChanged();
+    }
+
+    private void applyJournal(Journal journal) {
+        mLastBackupRestoreTime = journal.t;
+        mExistingKeys.clear();
+        if (journal.key != null) {
+            for (Key key : journal.key) {
+                mExistingKeys.add(keyToBackupKey(key));
+            }
+        }
+        restoredBackupVersion = journal.backupVersion;
     }
 
     /**
@@ -168,7 +203,6 @@ public class LauncherBackupHelper implements BackupHelper {
      * @param oldState notes from the last backup
      * @param data incremental key/value pairs to persist off-device
      * @param newState notes for the next backup
-     * @throws IOException
      */
     @Override
     public void performBackup(ParcelFileDescriptor oldState, BackupDataOutput data,
@@ -176,89 +210,201 @@ public class LauncherBackupHelper implements BackupHelper {
         if (VERBOSE) Log.v(TAG, "onBackup");
 
         Journal in = readJournal(oldState);
-        Journal out = new Journal();
-
-        long lastBackupTime = in.t;
-        out.t = System.currentTimeMillis();
-        out.rows = 0;
-        out.bytes = 0;
-
-        Log.v(TAG, "lastBackupTime = " + lastBackupTime);
-
-        ArrayList<Key> keys = new ArrayList<Key>();
-        if (launcherIsReady()) {
-            try {
-                backupFavorites(in, data, out, keys);
-                backupScreens(in, data, out, keys);
-                backupIcons(in, data, out, keys);
-                backupWidgets(in, data, out, keys);
-            } catch (IOException e) {
-                Log.e(TAG, "launcher backup has failed", e);
-            }
-            out.key = keys.toArray(new BackupProtos.Key[keys.size()]);
-        } else {
-            out = in;
+        if (!launcherIsReady()) {
+            dataChanged();
+            // Perform backup later.
+            writeJournal(newState, in);
+            return;
         }
 
-        writeJournal(newState, out);
-        Log.v(TAG, "onBackup: wrote " + out.bytes + "b in " + out.rows + " rows.");
+        if (mDeviceProfileData == null) {
+            LauncherAppState app = LauncherAppState.getInstance();
+            mIdp = app.getInvariantDeviceProfile();
+            mDeviceProfileData = initDeviceProfileData(mIdp);
+            mIconCache = app.getIconCache();
+        }
+
+        Log.v(TAG, "lastBackupTime = " + in.t);
+        mKeys.clear();
+        applyJournal(in);
+
+        // Record the time before performing backup so that entries edited while the backup
+        // was going on, do not get missed in next backup.
+        long newBackupTime = System.currentTimeMillis();
+        mBackupDataWasUpdated = false;
+        try {
+            backupFavorites(data);
+            backupScreens(data);
+            backupIcons(data);
+            backupWidgets(data);
+
+            // Delete any key which still exist in the old backup, but is not valid anymore.
+            HashSet<String> validKeys = new HashSet<String>();
+            for (Key key : mKeys) {
+                validKeys.add(keyToBackupKey(key));
+            }
+            mExistingKeys.removeAll(validKeys);
+
+            // Delete anything left in the existing keys.
+            for (String deleted: mExistingKeys) {
+                if (VERBOSE) Log.v(TAG, "dropping deleted item " + deleted);
+                data.writeEntityHeader(deleted, -1);
+                mBackupDataWasUpdated = true;
+            }
+
+            mExistingKeys.clear();
+            if (!mBackupDataWasUpdated) {
+                // Check if any metadata has changed
+                mBackupDataWasUpdated = (in.profile == null)
+                        || !Arrays.equals(DeviceProfieData.toByteArray(in.profile),
+                            DeviceProfieData.toByteArray(mDeviceProfileData))
+                        || (in.backupVersion != BACKUP_VERSION)
+                        || (in.appVersion != getAppVersion());
+            }
+
+            if (mBackupDataWasUpdated) {
+                mLastBackupRestoreTime = newBackupTime;
+
+                // We store the journal at two places.
+                //   1) Storing it in newState allows us to do partial backups by comparing old state
+                //   2) Storing it in backup data allows us to validate keys during restore
+                Journal state = getCurrentStateJournal();
+                writeRowToBackup(JOURNAL_KEY, state, data);
+            } else {
+                if (DEBUG) Log.d(TAG, "Nothing was written during backup");
+            }
+        } catch (IOException e) {
+            Log.e(TAG, "launcher backup has failed", e);
+        }
+
+        writeNewStateDescription(newState);
+    }
+
+    /**
+     * @return true if the backup corresponding to oldstate can be successfully applied
+     * to this device.
+     */
+    private boolean isBackupCompatible(Journal oldState) {
+        DeviceProfieData currentProfile = mDeviceProfileData;
+        DeviceProfieData oldProfile = oldState.profile;
+
+        if (oldProfile == null || oldProfile.desktopCols == 0) {
+            // Profile info is not valid, ignore the check.
+            return true;
+        }
+
+        boolean isHotseatCompatible = false;
+        if (currentProfile.allappsRank >= oldProfile.hotseatCount) {
+            isHotseatCompatible = true;
+            mHotseatShift = 0;
+        }
+
+        if ((currentProfile.allappsRank >= oldProfile.allappsRank)
+                && ((currentProfile.hotseatCount - currentProfile.allappsRank) >=
+                        (oldProfile.hotseatCount - oldProfile.allappsRank))) {
+            // There is enough space on both sides of the hotseat.
+            isHotseatCompatible = true;
+            mHotseatShift = currentProfile.allappsRank - oldProfile.allappsRank;
+        }
+
+        if (!isHotseatCompatible) {
+            return false;
+        }
+        if ((currentProfile.desktopCols >= oldProfile.desktopCols)
+                && (currentProfile.desktopRows >= oldProfile.desktopRows)) {
+            return true;
+        }
+
+        if (MigrateFromRestoreTask.ENABLED &&
+                (oldProfile.desktopCols - currentProfile.desktopCols <= 1) &&
+                (oldProfile.desktopRows - currentProfile.desktopRows <= 1)) {
+            // Allow desktop migration when row and/or column count contracts by 1.
+
+            migrationCompatibleProfileData = initDeviceProfileData(mIdp);
+            migrationCompatibleProfileData.desktopCols = oldProfile.desktopCols;
+            migrationCompatibleProfileData.desktopRows = oldProfile.desktopRows;
+            return true;
+        }
+        return false;
     }
 
     /**
      * Restore launcher configuration from the restored data stream.
-     *
-     * <P>Keys may arrive in any order.
+     * It assumes that the keys will arrive in lexical order. So if the journal was present in the
+     * backup, it should arrive first.
      *
      * @param data the key/value pair from the server
      */
     @Override
     public void restoreEntity(BackupDataInputStream data) {
-        if (VERBOSE) Log.v(TAG, "restoreEntity");
-        if (mKeys == null) {
-            mKeys = new ArrayList<Key>();
+        if (!restoreSuccessful) {
+            return;
         }
-        byte[] buffer = new byte[512];
-            String backupKey = data.getKey();
-            int dataSize = data.size();
-            if (buffer.length < dataSize) {
-                buffer = new byte[dataSize];
-            }
-            Key key = null;
-        int bytesRead = 0;
+
+        if (mDeviceProfileData == null) {
+            // This call does not happen on a looper thread. So LauncherAppState
+            // can't be created . Instead initialize required dependencies directly.
+            mIdp = new InvariantDeviceProfile(mContext);
+            mDeviceProfileData = initDeviceProfileData(mIdp);
+            mIconCache = new IconCache(mContext, mIdp);
+        }
+
+        int dataSize = data.size();
+        if (mBuffer.length < dataSize) {
+            mBuffer = new byte[dataSize];
+        }
         try {
-            bytesRead = data.read(buffer, 0, dataSize);
+            int bytesRead = data.read(mBuffer, 0, dataSize);
             if (DEBUG) Log.d(TAG, "read " + bytesRead + " of " + dataSize + " available");
-        } catch (IOException e) {
-            Log.e(TAG, "failed to read entity from restore data", e);
-        }
-        try {
-            key = backupKeyToKey(backupKey);
+            String backupKey = data.getKey();
+
+            if (JOURNAL_KEY.equals(backupKey)) {
+                if (VERBOSE) Log.v(TAG, "Journal entry restored");
+                if (!mKeys.isEmpty()) {
+                    // We received the journal key after a restore key.
+                    Log.wtf(TAG, keyToBackupKey(mKeys.get(0)) + " received after " + JOURNAL_KEY);
+                    restoreSuccessful = false;
+                    return;
+                }
+
+                Journal journal = new Journal();
+                MessageNano.mergeFrom(journal, readCheckedBytes(mBuffer, dataSize));
+                applyJournal(journal);
+                restoreSuccessful = isBackupCompatible(journal);
+                return;
+            }
+
+            if (!mExistingKeys.isEmpty() && !mExistingKeys.contains(backupKey)) {
+                if (DEBUG) Log.e(TAG, "Ignoring key not present in the backup state " + backupKey);
+                return;
+            }
+            Key key = backupKeyToKey(backupKey);
             mKeys.add(key);
             switch (key.type) {
                 case Key.FAVORITE:
-                    restoreFavorite(key, buffer, dataSize, mKeys);
+                    restoreFavorite(key, mBuffer, dataSize);
                     break;
 
                 case Key.SCREEN:
-                    restoreScreen(key, buffer, dataSize, mKeys);
+                    restoreScreen(key, mBuffer, dataSize);
                     break;
 
                 case Key.ICON:
-                    restoreIcon(key, buffer, dataSize, mKeys);
+                    restoreIcon(key, mBuffer, dataSize);
                     break;
 
                 case Key.WIDGET:
-                    restoreWidget(key, buffer, dataSize, mKeys);
+                    restoreWidget(key, mBuffer, dataSize);
                     break;
 
                 default:
                     Log.w(TAG, "unknown restore entity type: " + key.type);
+                    mKeys.remove(key);
                     break;
             }
-        } catch (KeyParsingException e) {
-            Log.w(TAG, "ignoring unparsable backup key: " + backupKey);
+        } catch (IOException e) {
+            Log.w(TAG, "ignoring unparsable backup entry", e);
         }
-
     }
 
     /**
@@ -268,62 +414,69 @@ public class LauncherBackupHelper implements BackupHelper {
      */
     @Override
     public void writeNewStateDescription(ParcelFileDescriptor newState) {
-        // clear the output journal time, to force a full backup to
-        // will catch any changes the restore process might have made
-        Journal out = new Journal();
-        out.t = 0;
-        out.key = mKeys.toArray(new BackupProtos.Key[mKeys.size()]);
-        writeJournal(newState, out);
-        Log.v(TAG, "onRestore: read " + mKeys.size() + " rows");
-        mKeys.clear();
+        writeJournal(newState, getCurrentStateJournal());
+    }
+
+    private Journal getCurrentStateJournal() {
+        Journal journal = new Journal();
+        journal.t = mLastBackupRestoreTime;
+        journal.key = mKeys.toArray(new BackupProtos.Key[mKeys.size()]);
+        journal.appVersion = getAppVersion();
+        journal.backupVersion = BACKUP_VERSION;
+        journal.profile = mDeviceProfileData;
+        return journal;
+    }
+
+    private int getAppVersion() {
+        try {
+            return mContext.getPackageManager()
+                    .getPackageInfo(mContext.getPackageName(), 0).versionCode;
+        } catch (NameNotFoundException e) {
+            return 0;
+        }
+    }
+
+    private DeviceProfieData initDeviceProfileData(InvariantDeviceProfile profile) {
+        DeviceProfieData data = new DeviceProfieData();
+        data.desktopRows = profile.numRows;
+        data.desktopCols = profile.numColumns;
+        data.hotseatCount = profile.numHotseatIcons;
+        data.allappsRank = profile.hotseatAllAppsRank;
+        return data;
     }
 
     /**
      * Write all modified favorites to the data stream.
      *
-     *
-     * @param in notes from last backup
      * @param data output stream for key/value pairs
-     * @param out notes about this backup
-     * @param keys keys to mark as clean in the notes for next backup
      * @throws IOException
      */
-    private void backupFavorites(Journal in, BackupDataOutput data, Journal out,
-            ArrayList<Key> keys)
-            throws IOException {
-        // read the old ID set
-        Set<String> savedIds = getSavedIdsByType(Key.FAVORITE, in);
-        if (DEBUG) Log.d(TAG, "favorite savedIds.size()=" + savedIds.size());
-
+    private void backupFavorites(BackupDataOutput data) throws IOException {
         // persist things that have changed since the last backup
         ContentResolver cr = mContext.getContentResolver();
+        // Don't backup apps in other profiles for now.
         Cursor cursor = cr.query(Favorites.CONTENT_URI, FAVORITE_PROJECTION,
-                null, null, null);
-        Set<String> currentIds = new HashSet<String>(cursor.getCount());
+                getUserSelectionArg(), null, null);
         try {
             cursor.moveToPosition(-1);
             while(cursor.moveToNext()) {
                 final long id = cursor.getLong(ID_INDEX);
                 final long updateTime = cursor.getLong(ID_MODIFIED);
                 Key key = getKey(Key.FAVORITE, id);
-                keys.add(key);
+                mKeys.add(key);
                 final String backupKey = keyToBackupKey(key);
-                currentIds.add(backupKey);
-                if (!savedIds.contains(backupKey) || updateTime >= in.t) {
-                    byte[] blob = packFavorite(cursor);
-                    writeRowToBackup(key, blob, out, data);
+
+                // Favorite proto changed in v4. Backup again if the version is old.
+                if (!mExistingKeys.contains(backupKey) || updateTime >= mLastBackupRestoreTime
+                        || restoredBackupVersion < 4) {
+                    writeRowToBackup(key, packFavorite(cursor), data);
                 } else {
-                    if (VERBOSE) Log.v(TAG, "favorite " + id + " was too old: " + updateTime);
+                    if (DEBUG) Log.d(TAG, "favorite already backup up: " + id);
                 }
             }
         } finally {
             cursor.close();
         }
-        if (DEBUG) Log.d(TAG, "favorite currentIds.size()=" + currentIds.size());
-
-        // these IDs must have been deleted
-        savedIds.removeAll(currentIds);
-        out.rows += removeDeletedKeysFromBackup(savedIds, data);
     }
 
     /**
@@ -334,74 +487,46 @@ public class LauncherBackupHelper implements BackupHelper {
      * @param key identifier for the row
      * @param buffer the serialized proto from the stream, may be larger than dataSize
      * @param dataSize the size of the proto from the stream
-     * @param keys keys to mark as clean in the notes for next backup
      */
-    private void restoreFavorite(Key key, byte[] buffer, int dataSize, ArrayList<Key> keys) {
+    private void restoreFavorite(Key key, byte[] buffer, int dataSize) throws IOException {
         if (VERBOSE) Log.v(TAG, "unpacking favorite " + key.id);
         if (DEBUG) Log.d(TAG, "read (" + buffer.length + "): " +
                 Base64.encodeToString(buffer, 0, dataSize, Base64.NO_WRAP));
 
-        if (!mRestoreEnabled) {
-            if (VERBOSE) Log.v(TAG, "restore not enabled: skipping database mutation");
-            return;
-        }
-
-        try {
-            ContentResolver cr = mContext.getContentResolver();
-            ContentValues values = unpackFavorite(buffer, 0, dataSize);
-            cr.insert(Favorites.CONTENT_URI, values);
-        } catch (InvalidProtocolBufferNanoException e) {
-            Log.e(TAG, "failed to decode favorite", e);
-        }
+        ContentResolver cr = mContext.getContentResolver();
+        ContentValues values = unpackFavorite(buffer, dataSize);
+        cr.insert(Favorites.CONTENT_URI, values);
     }
 
     /**
      * Write all modified screens to the data stream.
      *
-     *
-     * @param in notes from last backup
      * @param data output stream for key/value pairs
-     * @param out notes about this backup
-     * @param keys keys to mark as clean in the notes for next backup
      * @throws IOException
      */
-    private void backupScreens(Journal in, BackupDataOutput data, Journal out,
-            ArrayList<Key> keys)
-            throws IOException {
-        // read the old ID set
-        Set<String> savedIds = getSavedIdsByType(Key.SCREEN, in);
-        if (DEBUG) Log.d(TAG, "screen savedIds.size()=" + savedIds.size());
-
+    private void backupScreens(BackupDataOutput data) throws IOException {
         // persist things that have changed since the last backup
         ContentResolver cr = mContext.getContentResolver();
         Cursor cursor = cr.query(WorkspaceScreens.CONTENT_URI, SCREEN_PROJECTION,
                 null, null, null);
-        Set<String> currentIds = new HashSet<String>(cursor.getCount());
         try {
             cursor.moveToPosition(-1);
-            if (DEBUG) Log.d(TAG, "dumping screens after: " + in.t);
+            if (DEBUG) Log.d(TAG, "dumping screens after: " + mLastBackupRestoreTime);
             while(cursor.moveToNext()) {
                 final long id = cursor.getLong(ID_INDEX);
                 final long updateTime = cursor.getLong(ID_MODIFIED);
                 Key key = getKey(Key.SCREEN, id);
-                keys.add(key);
+                mKeys.add(key);
                 final String backupKey = keyToBackupKey(key);
-                currentIds.add(backupKey);
-                if (!savedIds.contains(backupKey) || updateTime >= in.t) {
-                    byte[] blob = packScreen(cursor);
-                    writeRowToBackup(key, blob, out, data);
+                if (!mExistingKeys.contains(backupKey) || updateTime >= mLastBackupRestoreTime) {
+                    writeRowToBackup(key, packScreen(cursor), data);
                 } else {
-                    if (VERBOSE) Log.v(TAG, "screen " + id + " was too old: " + updateTime);
+                    if (VERBOSE) Log.v(TAG, "screen already backup up " + id);
                 }
             }
         } finally {
             cursor.close();
         }
-        if (DEBUG) Log.d(TAG, "screen currentIds.size()=" + currentIds.size());
-
-        // these IDs must have been deleted
-        savedIds.removeAll(currentIds);
-        out.rows += removeDeletedKeysFromBackup(savedIds, data);
     }
 
     /**
@@ -412,59 +537,36 @@ public class LauncherBackupHelper implements BackupHelper {
      * @param key identifier for the row
      * @param buffer the serialized proto from the stream, may be larger than dataSize
      * @param dataSize the size of the proto from the stream
-     * @param keys keys to mark as clean in the notes for next backup
      */
-    private void restoreScreen(Key key, byte[] buffer, int dataSize, ArrayList<Key> keys) {
+    private void restoreScreen(Key key, byte[] buffer, int dataSize) throws IOException {
         if (VERBOSE) Log.v(TAG, "unpacking screen " + key.id);
         if (DEBUG) Log.d(TAG, "read (" + buffer.length + "): " +
                 Base64.encodeToString(buffer, 0, dataSize, Base64.NO_WRAP));
 
-        if (!mRestoreEnabled) {
-            if (VERBOSE) Log.v(TAG, "restore not enabled: skipping database mutation");
-            return;
-        }
-
-        try {
-            ContentResolver cr = mContext.getContentResolver();
-            ContentValues values = unpackScreen(buffer, 0, dataSize);
-            cr.insert(WorkspaceScreens.CONTENT_URI, values);
-
-        } catch (InvalidProtocolBufferNanoException e) {
-            Log.e(TAG, "failed to decode screen", e);
-        }
+        ContentResolver cr = mContext.getContentResolver();
+        ContentValues values = unpackScreen(buffer, dataSize);
+        cr.insert(WorkspaceScreens.CONTENT_URI, values);
     }
 
     /**
      * Write all the static icon resources we need to render placeholders
      * for a package that is not installed.
      *
-     * @param in notes from last backup
      * @param data output stream for key/value pairs
-     * @param out notes about this backup
-     * @param keys keys to mark as clean in the notes for next backup
-     * @throws IOException
      */
-    private void backupIcons(Journal in, BackupDataOutput data, Journal out,
-            ArrayList<Key> keys) throws IOException {
+    private void backupIcons(BackupDataOutput data) throws IOException {
         // persist icons that haven't been persisted yet
-        if (!initializeIconCache()) {
-            dataChanged(); // try again later
-            if (DEBUG) Log.d(TAG, "Launcher is not initialized, delaying icon backup");
-            return;
-        }
         final ContentResolver cr = mContext.getContentResolver();
         final int dpi = mContext.getResources().getDisplayMetrics().densityDpi;
+        final UserHandleCompat myUserHandle = UserHandleCompat.myUserHandle();
+        int backupUpIconCount = 0;
 
-        // read the old ID set
-        Set<String> savedIds = getSavedIdsByType(Key.ICON, in);
-        if (DEBUG) Log.d(TAG, "icon savedIds.size()=" + savedIds.size());
-
-        int startRows = out.rows;
-        if (DEBUG) Log.d(TAG, "starting here: " + startRows);
-        String where = Favorites.ITEM_TYPE + "=" + Favorites.ITEM_TYPE_APPLICATION;
+        // Don't backup apps in other profiles for now.
+        String where = "(" + Favorites.ITEM_TYPE + "=" + Favorites.ITEM_TYPE_APPLICATION + " OR " +
+                Favorites.ITEM_TYPE + "=" + Favorites.ITEM_TYPE_SHORTCUT + ") AND " +
+                getUserSelectionArg();
         Cursor cursor = cr.query(Favorites.CONTENT_URI, FAVORITE_PROJECTION,
                 where, null, null);
-        Set<String> currentIds = new HashSet<String>(cursor.getCount());
         try {
             cursor.moveToPosition(-1);
             while(cursor.moveToNext()) {
@@ -478,27 +580,26 @@ public class LauncherBackupHelper implements BackupHelper {
                     if (cn != null) {
                         key = getKey(Key.ICON, cn.flattenToShortString());
                         backupKey = keyToBackupKey(key);
-                        currentIds.add(backupKey);
                     } else {
                         Log.w(TAG, "empty intent on application favorite: " + id);
                     }
-                    if (savedIds.contains(backupKey)) {
-                        if (VERBOSE) Log.v(TAG, "already saved icon " + backupKey);
+                    if (mExistingKeys.contains(backupKey)) {
+                        if (DEBUG) Log.d(TAG, "already saved icon " + backupKey);
 
                         // remember that we already backed this up previously
-                        keys.add(key);
+                        mKeys.add(key);
                     } else if (backupKey != null) {
-                        if (DEBUG) Log.d(TAG, "I can count this high: " + out.rows);
-                        if ((out.rows - startRows) < MAX_ICONS_PER_PASS) {
-                            if (VERBOSE) Log.v(TAG, "saving icon " + backupKey);
-                            Bitmap icon = mIconCache.getIcon(intent);
-                            keys.add(key);
-                            if (icon != null && !mIconCache.isDefaultIcon(icon)) {
-                                byte[] blob = packIcon(dpi, icon);
-                                writeRowToBackup(key, blob, out, data);
+                        if (DEBUG) Log.d(TAG, "I can count this high: " + backupUpIconCount);
+                        if (backupUpIconCount < MAX_ICONS_PER_PASS) {
+                            if (DEBUG) Log.d(TAG, "saving icon " + backupKey);
+                            Bitmap icon = mIconCache.getIcon(intent, myUserHandle);
+                            if (icon != null && !mIconCache.isDefaultIcon(icon, myUserHandle)) {
+                                writeRowToBackup(key, packIcon(dpi, icon), data);
+                                mKeys.add(key);
+                                backupUpIconCount ++;
                             }
                         } else {
-                            if (VERBOSE) Log.d(TAG, "deferring icon backup " + backupKey);
+                            if (VERBOSE) Log.v(TAG, "deferring icon backup " + backupKey);
                             // too many icons for this pass, request another.
                             dataChanged();
                         }
@@ -513,11 +614,6 @@ public class LauncherBackupHelper implements BackupHelper {
         } finally {
             cursor.close();
         }
-        if (DEBUG) Log.d(TAG, "icon currentIds.size()=" + currentIds.size());
-
-        // these IDs must have been deleted
-        savedIds.removeAll(currentIds);
-        out.rows += removeDeletedKeysFromBackup(savedIds, data);
     }
 
     /**
@@ -528,39 +624,23 @@ public class LauncherBackupHelper implements BackupHelper {
      * @param key identifier for the row
      * @param buffer the serialized proto from the stream, may be larger than dataSize
      * @param dataSize the size of the proto from the stream
-     * @param keys keys to mark as clean in the notes for next backup
      */
-    private void restoreIcon(Key key, byte[] buffer, int dataSize, ArrayList<Key> keys) {
+    private void restoreIcon(Key key, byte[] buffer, int dataSize) throws IOException {
         if (VERBOSE) Log.v(TAG, "unpacking icon " + key.id);
         if (DEBUG) Log.d(TAG, "read (" + buffer.length + "): " +
                 Base64.encodeToString(buffer, 0, dataSize, Base64.NO_WRAP));
 
-        try {
-            Resource res = unpackIcon(buffer, 0, dataSize);
-            if (DEBUG) {
-                Log.d(TAG, "unpacked " + res.dpi + " dpi icon");
-            }
-            if (DEBUG_PAYLOAD) {
-                Log.d(TAG, "read " +
-                        Base64.encodeToString(res.data, 0, res.data.length,
-                                Base64.NO_WRAP));
-            }
-            Bitmap icon = BitmapFactory.decodeByteArray(res.data, 0, res.data.length);
-            if (icon == null) {
-                Log.w(TAG, "failed to unpack icon for " + key.name);
-            }
-
-            if (!mRestoreEnabled) {
-                if (VERBOSE) {
-                    Log.v(TAG, "restore not enabled: skipping database mutation");
-                }
-                return;
-            } else {
-                IconCache.preloadIcon(mContext, ComponentName.unflattenFromString(key.name),
-                        icon, res.dpi);
-            }
-        } catch (IOException e) {
-            Log.d(TAG, "failed to save restored icon for: " + key.name, e);
+        Resource res = unpackProto(new Resource(), buffer, dataSize);
+        if (DEBUG) {
+            Log.d(TAG, "unpacked " + res.dpi + " dpi icon");
+        }
+        Bitmap icon = BitmapFactory.decodeByteArray(res.data, 0, res.data.length);
+        if (icon == null) {
+            Log.w(TAG, "failed to unpack icon for " + key.name);
+        } else {
+            if (VERBOSE) Log.v(TAG, "saving restored icon as: " + key.name);
+            mIconCache.preloadIcon(ComponentName.unflattenFromString(key.name), icon, res.dpi,
+                    "" /* label */, mUserSerial, mIdp);
         }
     }
 
@@ -568,71 +648,50 @@ public class LauncherBackupHelper implements BackupHelper {
      * Write all the static widget resources we need to render placeholders
      * for a package that is not installed.
      *
-     * @param in notes from last backup
      * @param data output stream for key/value pairs
-     * @param out notes about this backup
-     * @param keys keys to mark as clean in the notes for next backup
      * @throws IOException
      */
-    private void backupWidgets(Journal in, BackupDataOutput data, Journal out,
-            ArrayList<Key> keys) throws IOException {
+    private void backupWidgets(BackupDataOutput data) throws IOException {
         // persist static widget info that hasn't been persisted yet
-        final LauncherAppState appState = LauncherAppState.getInstanceNoCreate();
-        if (appState == null || !initializeIconCache()) {
-            Log.w(TAG, "Failed to get icon cache during restore");
-            return;
-        }
         final ContentResolver cr = mContext.getContentResolver();
-        final WidgetPreviewLoader previewLoader = new WidgetPreviewLoader(mContext);
-        final PagedViewCellLayout widgetSpacingLayout = new PagedViewCellLayout(mContext);
         final int dpi = mContext.getResources().getDisplayMetrics().densityDpi;
-        final DeviceProfile profile = appState.getDynamicGrid().getDeviceProfile();
-        if (DEBUG) Log.d(TAG, "cellWidthPx: " + profile.cellWidthPx);
+        int backupWidgetCount = 0;
 
-        // read the old ID set
-        Set<String> savedIds = getSavedIdsByType(Key.WIDGET, in);
-        if (DEBUG) Log.d(TAG, "widgets savedIds.size()=" + savedIds.size());
-
-        int startRows = out.rows;
-        if (DEBUG) Log.d(TAG, "starting here: " + startRows);
-        String where = Favorites.ITEM_TYPE + "=" + Favorites.ITEM_TYPE_APPWIDGET;
+        String where = Favorites.ITEM_TYPE + "=" + Favorites.ITEM_TYPE_APPWIDGET + " AND "
+                + getUserSelectionArg();
         Cursor cursor = cr.query(Favorites.CONTENT_URI, FAVORITE_PROJECTION,
                 where, null, null);
-        Set<String> currentIds = new HashSet<String>(cursor.getCount());
         try {
             cursor.moveToPosition(-1);
             while(cursor.moveToNext()) {
                 final long id = cursor.getLong(ID_INDEX);
                 final String providerName = cursor.getString(APPWIDGET_PROVIDER_INDEX);
-                final int spanX = cursor.getInt(SPANX_INDEX);
-                final int spanY = cursor.getInt(SPANY_INDEX);
                 final ComponentName provider = ComponentName.unflattenFromString(providerName);
                 Key key = null;
                 String backupKey = null;
                 if (provider != null) {
                     key = getKey(Key.WIDGET, providerName);
                     backupKey = keyToBackupKey(key);
-                    currentIds.add(backupKey);
                 } else {
                     Log.w(TAG, "empty intent on appwidget: " + id);
                 }
-                if (savedIds.contains(backupKey)) {
-                    if (VERBOSE) Log.v(TAG, "already saved widget " + backupKey);
+
+                // Widget backup proto changed in v3. So add it again if the original backup is old.
+                if (mExistingKeys.contains(backupKey) && restoredBackupVersion >= 3) {
+                    if (DEBUG) Log.d(TAG, "already saved widget " + backupKey);
 
                     // remember that we already backed this up previously
-                    keys.add(key);
+                    mKeys.add(key);
                 } else if (backupKey != null) {
-                    if (DEBUG) Log.d(TAG, "I can count this high: " + out.rows);
-                    if ((out.rows - startRows) < MAX_WIDGETS_PER_PASS) {
-                        if (VERBOSE) Log.v(TAG, "saving widget " + backupKey);
-                        previewLoader.setPreviewSize(spanX * profile.cellWidthPx,
-                                spanY * profile.cellHeightPx, widgetSpacingLayout);
-                        byte[] blob = packWidget(dpi, previewLoader, mIconCache, provider);
-                        keys.add(key);
-                        writeRowToBackup(key, blob, out, data);
-
+                    if (DEBUG) Log.d(TAG, "I can count this high: " + backupWidgetCount);
+                    if (backupWidgetCount < MAX_WIDGETS_PER_PASS) {
+                        if (DEBUG) Log.d(TAG, "saving widget " + backupKey);
+                        UserHandleCompat user = UserHandleCompat.myUserHandle();
+                        writeRowToBackup(key, packWidget(dpi, provider, user), data);
+                        mKeys.add(key);
+                        backupWidgetCount ++;
                     } else {
-                        if (VERBOSE) Log.d(TAG, "deferring widget backup " + backupKey);
+                        if (VERBOSE) Log.v(TAG, "deferring widget backup " + backupKey);
                         // too many widgets for this pass, request another.
                         dataChanged();
                     }
@@ -641,11 +700,6 @@ public class LauncherBackupHelper implements BackupHelper {
         } finally {
             cursor.close();
         }
-        if (DEBUG) Log.d(TAG, "widget currentIds.size()=" + currentIds.size());
-
-        // these IDs must have been deleted
-        savedIds.removeAll(currentIds);
-        out.rows += removeDeletedKeysFromBackup(savedIds, data);
     }
 
     /**
@@ -656,32 +710,26 @@ public class LauncherBackupHelper implements BackupHelper {
      * @param key identifier for the row
      * @param buffer the serialized proto from the stream, may be larger than dataSize
      * @param dataSize the size of the proto from the stream
-     * @param keys keys to mark as clean in the notes for next backup
      */
-    private void restoreWidget(Key key, byte[] buffer, int dataSize, ArrayList<Key> keys) {
+    private void restoreWidget(Key key, byte[] buffer, int dataSize) throws IOException {
         if (VERBOSE) Log.v(TAG, "unpacking widget " + key.id);
         if (DEBUG) Log.d(TAG, "read (" + buffer.length + "): " +
                 Base64.encodeToString(buffer, 0, dataSize, Base64.NO_WRAP));
-        try {
-            Widget widget = unpackWidget(buffer, 0, dataSize);
-            if (DEBUG) Log.d(TAG, "unpacked " + widget.provider);
-            if (widget.icon.data != null)  {
-                Bitmap icon = BitmapFactory
-                        .decodeByteArray(widget.icon.data, 0, widget.icon.data.length);
-                if (icon == null) {
-                    Log.w(TAG, "failed to unpack widget icon for " + key.name);
-                }
-            }
-
-            if (!mRestoreEnabled) {
-                if (VERBOSE) Log.v(TAG, "restore not enabled: skipping database mutation");
-                return;
+        Widget widget = unpackProto(new Widget(), buffer, dataSize);
+        if (DEBUG) Log.d(TAG, "unpacked " + widget.provider);
+        if (widget.icon.data != null)  {
+            Bitmap icon = BitmapFactory
+                    .decodeByteArray(widget.icon.data, 0, widget.icon.data.length);
+            if (icon == null) {
+                Log.w(TAG, "failed to unpack widget icon for " + key.name);
             } else {
-                // future site of widget table mutation
+                mIconCache.preloadIcon(ComponentName.unflattenFromString(widget.provider),
+                        icon, widget.icon.dpi, widget.label, mUserSerial, mIdp);
             }
-        } catch (InvalidProtocolBufferNanoException e) {
-            Log.e(TAG, "failed to decode widget", e);
         }
+
+        // Cache widget min sizes incase migration is required.
+        widgetSizes.add(widget.provider + "#" + widget.minSpanX + "," + widget.minSpanY);
     }
 
     /** create a new key, with an integer ID.
@@ -716,42 +764,18 @@ public class LauncherBackupHelper implements BackupHelper {
     }
 
     /** keys need to be strings, decode and parse. */
-    private Key backupKeyToKey(String backupKey) throws KeyParsingException {
+    private Key backupKeyToKey(String backupKey) throws InvalidBackupException {
         try {
             Key key = Key.parseFrom(Base64.decode(backupKey, Base64.DEFAULT));
             if (key.checksum != checkKey(key)) {
                 key = null;
-                throw new KeyParsingException("invalid key read from stream" + backupKey);
+                throw new InvalidBackupException("invalid key read from stream" + backupKey);
             }
             return key;
         } catch (InvalidProtocolBufferNanoException e) {
-            throw new KeyParsingException(e);
+            throw new InvalidBackupException(e);
         } catch (IllegalArgumentException e) {
-            throw new KeyParsingException(e);
-        }
-    }
-
-    private String getKeyName(Key key) {
-        if (TextUtils.isEmpty(key.name)) {
-            return Long.toString(key.id);
-        } else {
-            return key.name;
-        }
-
-    }
-
-    private String geKeyType(Key key) {
-        switch (key.type) {
-            case Key.FAVORITE:
-                return "favorite";
-            case Key.SCREEN:
-                return "screen";
-            case Key.ICON:
-                return "icon";
-            case Key.WIDGET:
-                return "widget";
-            default:
-                return "anonymous";
+            throw new InvalidBackupException(e);
         }
     }
 
@@ -767,8 +791,19 @@ public class LauncherBackupHelper implements BackupHelper {
         return checksum.getValue();
     }
 
+    /**
+     * @return true if its an hotseat item, that can be replaced during restore.
+     * TODO: Extend check for folders in hotseat.
+     */
+    private boolean isReplaceableHotseatItem(Favorite favorite) {
+        return favorite.container == Favorites.CONTAINER_HOTSEAT
+                && favorite.intent != null
+                && (favorite.itemType == Favorites.ITEM_TYPE_APPLICATION
+                || favorite.itemType == Favorites.ITEM_TYPE_SHORTCUT);
+    }
+
     /** Serialize a Favorite for persistence, including a checksum wrapper. */
-    private byte[] packFavorite(Cursor c) {
+    private Favorite packFavorite(Cursor c) {
         Favorite favorite = new Favorite();
         favorite.id = c.getLong(ID_INDEX);
         favorite.screen = c.getInt(SCREEN_INDEX);
@@ -778,29 +813,22 @@ public class LauncherBackupHelper implements BackupHelper {
         favorite.spanX = c.getInt(SPANX_INDEX);
         favorite.spanY = c.getInt(SPANY_INDEX);
         favorite.iconType = c.getInt(ICON_TYPE_INDEX);
-        if (favorite.iconType == Favorites.ICON_TYPE_RESOURCE) {
-            String iconPackage = c.getString(ICON_PACKAGE_INDEX);
-            if (!TextUtils.isEmpty(iconPackage)) {
-                favorite.iconPackage = iconPackage;
-            }
-            String iconResource = c.getString(ICON_RESOURCE_INDEX);
-            if (!TextUtils.isEmpty(iconResource)) {
-                favorite.iconResource = iconResource;
-            }
-        }
-        if (favorite.iconType == Favorites.ICON_TYPE_BITMAP) {
-            byte[] blob = c.getBlob(ICON_INDEX);
-            if (blob != null && blob.length > 0) {
-                favorite.icon = blob;
-            }
-        }
+        favorite.rank = c.getInt(RANK_INDEX);
+
         String title = c.getString(TITLE_INDEX);
         if (!TextUtils.isEmpty(title)) {
             favorite.title = title;
         }
-        String intent = c.getString(INTENT_INDEX);
-        if (!TextUtils.isEmpty(intent)) {
-            favorite.intent = intent;
+        String intentDescription = c.getString(INTENT_INDEX);
+        Intent intent = null;
+        if (!TextUtils.isEmpty(intentDescription)) {
+            try {
+                intent = Intent.parseUri(intentDescription, 0);
+                intent.removeExtra(ItemInfo.EXTRA_PROFILE);
+                favorite.intent = intent.toUri(0);
+            } catch (URISyntaxException e) {
+                Log.e(TAG, "Invalid intent", e);
+            }
         }
         favorite.itemType = c.getInt(ITEM_TYPE_INDEX);
         if (favorite.itemType == Favorites.ITEM_TYPE_APPWIDGET) {
@@ -809,18 +837,62 @@ public class LauncherBackupHelper implements BackupHelper {
             if (!TextUtils.isEmpty(appWidgetProvider)) {
                 favorite.appWidgetProvider = appWidgetProvider;
             }
+        } else if (favorite.itemType == Favorites.ITEM_TYPE_SHORTCUT) {
+            if (favorite.iconType == Favorites.ICON_TYPE_RESOURCE) {
+                String iconPackage = c.getString(ICON_PACKAGE_INDEX);
+                if (!TextUtils.isEmpty(iconPackage)) {
+                    favorite.iconPackage = iconPackage;
+                }
+                String iconResource = c.getString(ICON_RESOURCE_INDEX);
+                if (!TextUtils.isEmpty(iconResource)) {
+                    favorite.iconResource = iconResource;
+                }
+            }
+
+            byte[] blob = c.getBlob(ICON_INDEX);
+            if (blob != null && blob.length > 0) {
+                favorite.icon = blob;
+            }
         }
 
-        return writeCheckedBytes(favorite);
+        if (isReplaceableHotseatItem(favorite)) {
+            if (intent != null && intent.getComponent() != null) {
+                PackageManager pm = mContext.getPackageManager();
+                ActivityInfo activity = null;;
+                try {
+                    activity = pm.getActivityInfo(intent.getComponent(), 0);
+                } catch (NameNotFoundException e) {
+                    Log.e(TAG, "Target not found", e);
+                }
+                if (activity == null) {
+                    return favorite;
+                }
+                for (int i = 0; i < mItemTypeMatchers.length; i++) {
+                    if (mItemTypeMatchers[i] == null) {
+                        mItemTypeMatchers[i] = new ItemTypeMatcher(
+                                CommonAppTypeParser.getResourceForItemType(i));
+                    }
+                    if (mItemTypeMatchers[i].matches(activity, pm)) {
+                        favorite.targetType = i;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return favorite;
     }
 
     /** Deserialize a Favorite from persistence, after verifying checksum wrapper. */
-    private ContentValues unpackFavorite(byte[] buffer, int offset, int dataSize)
-            throws InvalidProtocolBufferNanoException {
-        Favorite favorite = new Favorite();
-        MessageNano.mergeFrom(favorite, readCheckedBytes(buffer, offset, dataSize));
-        if (VERBOSE) Log.v(TAG, "unpacked favorite " + favorite.itemType + ", " +
-                (TextUtils.isEmpty(favorite.title) ? favorite.id : favorite.title));
+    private ContentValues unpackFavorite(byte[] buffer, int dataSize)
+            throws IOException {
+        Favorite favorite = unpackProto(new Favorite(), buffer, dataSize);
+
+        // If it is a hotseat item, move it accordingly.
+        if (favorite.container == Favorites.CONTAINER_HOTSEAT) {
+            favorite.screen += mHotseatShift;
+        }
+
         ContentValues values = new ContentValues();
         values.put(Favorites._ID, favorite.id);
         values.put(Favorites.SCREEN, favorite.screen);
@@ -829,14 +901,17 @@ public class LauncherBackupHelper implements BackupHelper {
         values.put(Favorites.CELLY, favorite.cellY);
         values.put(Favorites.SPANX, favorite.spanX);
         values.put(Favorites.SPANY, favorite.spanY);
-        values.put(Favorites.ICON_TYPE, favorite.iconType);
-        if (favorite.iconType == Favorites.ICON_TYPE_RESOURCE) {
-            values.put(Favorites.ICON_PACKAGE, favorite.iconPackage);
-            values.put(Favorites.ICON_RESOURCE, favorite.iconResource);
-        }
-        if (favorite.iconType == Favorites.ICON_TYPE_BITMAP) {
+        values.put(Favorites.RANK, favorite.rank);
+
+        if (favorite.itemType == Favorites.ITEM_TYPE_SHORTCUT) {
+            values.put(Favorites.ICON_TYPE, favorite.iconType);
+            if (favorite.iconType == Favorites.ICON_TYPE_RESOURCE) {
+                values.put(Favorites.ICON_PACKAGE, favorite.iconPackage);
+                values.put(Favorites.ICON_RESOURCE, favorite.iconResource);
+            }
             values.put(Favorites.ICON, favorite.icon);
         }
+
         if (!TextUtils.isEmpty(favorite.title)) {
             values.put(Favorites.TITLE, favorite.title);
         } else {
@@ -846,34 +921,78 @@ public class LauncherBackupHelper implements BackupHelper {
             values.put(Favorites.INTENT, favorite.intent);
         }
         values.put(Favorites.ITEM_TYPE, favorite.itemType);
+
+        UserHandleCompat myUserHandle = UserHandleCompat.myUserHandle();
+        long userSerialNumber =
+                UserManagerCompat.getInstance(mContext).getSerialNumberForUser(myUserHandle);
+        values.put(LauncherSettings.Favorites.PROFILE_ID, userSerialNumber);
+
+        // If we will attempt grid resize, use the original profile to validate grid size, as
+        // anything which fits in the original grid should fit in the current grid after
+        // grid migration.
+        DeviceProfieData currentProfile = migrationCompatibleProfileData == null
+                ? mDeviceProfileData : migrationCompatibleProfileData;
+
         if (favorite.itemType == Favorites.ITEM_TYPE_APPWIDGET) {
             if (!TextUtils.isEmpty(favorite.appWidgetProvider)) {
                 values.put(Favorites.APPWIDGET_PROVIDER, favorite.appWidgetProvider);
             }
             values.put(Favorites.APPWIDGET_ID, favorite.appWidgetId);
-        }
+            values.put(LauncherSettings.Favorites.RESTORED,
+                    LauncherAppWidgetInfo.FLAG_ID_NOT_VALID |
+                    LauncherAppWidgetInfo.FLAG_PROVIDER_NOT_READY |
+                    LauncherAppWidgetInfo.FLAG_UI_NOT_READY);
 
-        // Let LauncherModel know we've been here.
-        values.put(LauncherSettings.Favorites.RESTORED, 1);
+            // Verify placement
+            if (((favorite.cellX + favorite.spanX) > currentProfile.desktopCols)
+                    || ((favorite.cellY + favorite.spanY) > currentProfile.desktopRows)) {
+                restoreSuccessful = false;
+                throw new InvalidBackupException("Widget not in screen bounds, aborting restore");
+            }
+        } else {
+            // Check if it is an hotseat item, that can be replaced.
+            if (isReplaceableHotseatItem(favorite)
+                    && favorite.targetType != Favorite.TARGET_NONE
+                    && favorite.targetType < CommonAppTypeParser.SUPPORTED_TYPE_COUNT) {
+                Log.e(TAG, "Added item type flag");
+                values.put(LauncherSettings.Favorites.RESTORED,
+                        1 | CommonAppTypeParser.encodeItemTypeToFlag(favorite.targetType));
+            } else {
+                // Let LauncherModel know we've been here.
+                values.put(LauncherSettings.Favorites.RESTORED, 1);
+            }
+
+            // Verify placement
+            if (favorite.container == Favorites.CONTAINER_HOTSEAT) {
+                if ((favorite.screen >= currentProfile.hotseatCount)
+                        || (favorite.screen == currentProfile.allappsRank)) {
+                    restoreSuccessful = false;
+                    throw new InvalidBackupException("Item not in hotseat bounds, aborting restore");
+                }
+            } else {
+                if ((favorite.cellX >= currentProfile.desktopCols)
+                        || (favorite.cellY >= currentProfile.desktopRows)) {
+                    restoreSuccessful = false;
+                    throw new InvalidBackupException("Item not in desktop bounds, aborting restore");
+                }
+            }
+        }
 
         return values;
     }
 
     /** Serialize a Screen for persistence, including a checksum wrapper. */
-    private byte[] packScreen(Cursor c) {
+    private Screen packScreen(Cursor c) {
         Screen screen = new Screen();
         screen.id = c.getLong(ID_INDEX);
         screen.rank = c.getInt(SCREEN_RANK_INDEX);
-
-        return writeCheckedBytes(screen);
+        return screen;
     }
 
     /** Deserialize a Screen from persistence, after verifying checksum wrapper. */
-    private ContentValues unpackScreen(byte[] buffer, int offset, int dataSize)
+    private ContentValues unpackScreen(byte[] buffer, int dataSize)
             throws InvalidProtocolBufferNanoException {
-        Screen screen = new Screen();
-        MessageNano.mergeFrom(screen, readCheckedBytes(buffer, offset, dataSize));
-        if (VERBOSE) Log.v(TAG, "unpacked screen " + screen.id + "/" + screen.rank);
+        Screen screen = unpackProto(new Screen(), buffer, dataSize);
         ContentValues values = new ContentValues();
         values.put(WorkspaceScreens._ID, screen.id);
         values.put(WorkspaceScreens.SCREEN_RANK, screen.rank);
@@ -881,62 +1000,44 @@ public class LauncherBackupHelper implements BackupHelper {
     }
 
     /** Serialize an icon Resource for persistence, including a checksum wrapper. */
-    private byte[] packIcon(int dpi, Bitmap icon) {
+    private Resource packIcon(int dpi, Bitmap icon) {
         Resource res = new Resource();
         res.dpi = dpi;
-        ByteArrayOutputStream os = new ByteArrayOutputStream();
-        if (icon.compress(IMAGE_FORMAT, IMAGE_COMPRESSION_QUALITY, os)) {
-            res.data = os.toByteArray();
-        }
-        return writeCheckedBytes(res);
-    }
-
-    /** Deserialize an icon resource from persistence, after verifying checksum wrapper. */
-    private static Resource unpackIcon(byte[] buffer, int offset, int dataSize)
-            throws InvalidProtocolBufferNanoException {
-        Resource res = new Resource();
-        MessageNano.mergeFrom(res, readCheckedBytes(buffer, offset, dataSize));
-        if (VERBOSE) Log.v(TAG, "unpacked icon " + res.dpi + "/" + res.data.length);
+        res.data = Utilities.flattenBitmap(icon);
         return res;
     }
 
     /** Serialize a widget for persistence, including a checksum wrapper. */
-    private byte[] packWidget(int dpi, WidgetPreviewLoader previewLoader, IconCache iconCache,
-            ComponentName provider) {
-        final AppWidgetProviderInfo info = findAppWidgetProviderInfo(provider);
+    private Widget packWidget(int dpi, ComponentName provider, UserHandleCompat user) {
+        final LauncherAppWidgetProviderInfo info =
+                LauncherModel.getProviderInfo(mContext, provider, user);
         Widget widget = new Widget();
         widget.provider = provider.flattenToShortString();
         widget.label = info.label;
         widget.configure = info.configure != null;
         if (info.icon != 0) {
             widget.icon = new Resource();
-            Drawable fullResIcon = iconCache.getFullResIcon(provider.getPackageName(), info.icon);
+            Drawable fullResIcon = mIconCache.getFullResIcon(provider.getPackageName(), info.icon);
             Bitmap icon = Utilities.createIconBitmap(fullResIcon, mContext);
-            ByteArrayOutputStream os = new ByteArrayOutputStream();
-            if (icon.compress(IMAGE_FORMAT, IMAGE_COMPRESSION_QUALITY, os)) {
-                widget.icon.data = os.toByteArray();
-                widget.icon.dpi = dpi;
-            }
+            widget.icon.data = Utilities.flattenBitmap(icon);
+            widget.icon.dpi = dpi;
         }
-        if (info.previewImage != 0) {
-            widget.preview = new Resource();
-            Bitmap preview = previewLoader.generateWidgetPreview(info, null);
-            ByteArrayOutputStream os = new ByteArrayOutputStream();
-            if (preview.compress(IMAGE_FORMAT, IMAGE_COMPRESSION_QUALITY, os)) {
-                widget.preview.data = os.toByteArray();
-                widget.preview.dpi = dpi;
-            }
-        }
-        return writeCheckedBytes(widget);
+
+        Point spans = info.getMinSpans(mIdp, mContext);
+        widget.minSpanX = spans.x;
+        widget.minSpanY = spans.y;
+
+        return widget;
     }
 
-    /** Deserialize a widget from persistence, after verifying checksum wrapper. */
-    private Widget unpackWidget(byte[] buffer, int offset, int dataSize)
+    /**
+     * Deserialize a proto after verifying checksum wrapper.
+     */
+    private <T extends MessageNano> T unpackProto(T proto, byte[] buffer, int dataSize)
             throws InvalidProtocolBufferNanoException {
-        Widget widget = new Widget();
-        MessageNano.mergeFrom(widget, readCheckedBytes(buffer, offset, dataSize));
-        if (VERBOSE) Log.v(TAG, "unpacked widget " + widget.provider);
-        return widget;
+        MessageNano.mergeFrom(proto, readCheckedBytes(buffer, dataSize));
+        if (DEBUG) Log.d(TAG, "unpacked proto " + proto);
+        return proto;
     }
 
     /**
@@ -972,9 +1073,6 @@ public class LauncherBackupHelper implements BackupHelper {
                         if (result > 0) {
                             availableBytes -= result;
                             bytesRead += result;
-                            if (DEBUG && (bytesRead % 100 == 0)) {
-                                Log.d(TAG, "read some bytes: " + bytesRead);
-                            }
                         } else {
                             Log.w(TAG, "unexpected end of file while reading journal.");
                             // stop reading and see what there is to parse
@@ -987,7 +1085,7 @@ public class LauncherBackupHelper implements BackupHelper {
 
                     // check the buffer to see if we have a valid journal
                     try {
-                        MessageNano.mergeFrom(journal, readCheckedBytes(buffer, 0, bytesRead));
+                        MessageNano.mergeFrom(journal, readCheckedBytes(buffer, bytesRead));
                         // if we are here, then we have read a valid, checksum-verified journal
                         valid = true;
                         availableBytes = 0;
@@ -1015,46 +1113,18 @@ public class LauncherBackupHelper implements BackupHelper {
         return journal;
     }
 
-    private void writeRowToBackup(Key key, byte[] blob, Journal out,
+    private void writeRowToBackup(Key key, MessageNano proto, BackupDataOutput data)
+            throws IOException {
+        writeRowToBackup(keyToBackupKey(key), proto, data);
+    }
+
+    private void writeRowToBackup(String backupKey, MessageNano proto,
             BackupDataOutput data) throws IOException {
-        String backupKey = keyToBackupKey(key);
+        byte[] blob = writeCheckedBytes(proto);
         data.writeEntityHeader(backupKey, blob.length);
         data.writeEntityData(blob, blob.length);
-        out.rows++;
-        out.bytes += blob.length;
-        if (VERBOSE) Log.v(TAG, "saving " + geKeyType(key) + " " + backupKey + ": " +
-                getKeyName(key) + "/" + blob.length);
-        if(DEBUG_PAYLOAD) {
-            String encoded = Base64.encodeToString(blob, 0, blob.length, Base64.NO_WRAP);
-            final int chunkSize = 1024;
-            for (int offset = 0; offset < encoded.length(); offset += chunkSize) {
-                int end = offset + chunkSize;
-                end = Math.min(end, encoded.length());
-                Log.w(TAG, "wrote " + encoded.substring(offset, end));
-            }
-        }
-    }
-
-    private Set<String> getSavedIdsByType(int type, Journal in) {
-        Set<String> savedIds = new HashSet<String>();
-        for(int i = 0; i < in.key.length; i++) {
-            Key key = in.key[i];
-            if (key.type == type) {
-                savedIds.add(keyToBackupKey(key));
-            }
-        }
-        return savedIds;
-    }
-
-    private int removeDeletedKeysFromBackup(Set<String> deletedIds, BackupDataOutput data)
-            throws IOException {
-        int rows = 0;
-        for(String deleted: deletedIds) {
-            if (VERBOSE) Log.v(TAG, "dropping deleted item " + deleted);
-            data.writeEntityHeader(deleted, -1);
-            rows++;
-        }
-        return rows;
+        mBackupDataWasUpdated = true;
+        if (VERBOSE) Log.v(TAG, "Writing New entry " + backupKey);
     }
 
     /**
@@ -1090,10 +1160,10 @@ public class LauncherBackupHelper implements BackupHelper {
     }
 
     /** Unwrap a proto message from a CheckedMessage, verifying the checksum. */
-    private static byte[] readCheckedBytes(byte[] buffer, int offset, int dataSize)
+    private static byte[] readCheckedBytes(byte[] buffer, int dataSize)
             throws InvalidProtocolBufferNanoException {
         CheckedMessage wrapper = new CheckedMessage();
-        MessageNano.mergeFrom(wrapper, buffer, offset, dataSize);
+        MessageNano.mergeFrom(wrapper, buffer, 0, dataSize);
         CRC32 checksum = new CRC32();
         checksum.update(wrapper.payload);
         if (wrapper.checksum != checksum.getValue()) {
@@ -1102,37 +1172,9 @@ public class LauncherBackupHelper implements BackupHelper {
         return wrapper.payload;
     }
 
-    private AppWidgetProviderInfo findAppWidgetProviderInfo(ComponentName component) {
-        if (mWidgetMap == null) {
-            List<AppWidgetProviderInfo> widgets =
-                    AppWidgetManager.getInstance(mContext).getInstalledProviders();
-            mWidgetMap = new HashMap<ComponentName, AppWidgetProviderInfo>(widgets.size());
-            for (AppWidgetProviderInfo info : widgets) {
-                mWidgetMap.put(info.provider, info);
-            }
-        }
-        return mWidgetMap.get(component);
-    }
-
-
-    private boolean initializeIconCache() {
-        if (mIconCache != null) {
-            return true;
-        }
-
-        final LauncherAppState appState = LauncherAppState.getInstanceNoCreate();
-        if (appState == null) {
-            Throwable stackTrace = new Throwable();
-            stackTrace.fillInStackTrace();
-            Log.w(TAG, "Failed to get app state during backup/restore", stackTrace);
-            return false;
-        }
-        mIconCache = appState.getIconCache();
-        return mIconCache != null;
-    }
-
-
-   // check if the launcher is in a state to support backup
+    /**
+     * @return true if the launcher is in a state to support backup
+     */
     private boolean launcherIsReady() {
         ContentResolver cr = mContext.getContentResolver();
         Cursor cursor = cr.query(Favorites.CONTENT_URI, FAVORITE_PROJECTION, null, null, null);
@@ -1142,22 +1184,83 @@ public class LauncherBackupHelper implements BackupHelper {
         }
         cursor.close();
 
-        if (!initializeIconCache()) {
+        if (LauncherAppState.getInstanceNoCreate() == null) {
             // launcher services are unavailable, try again later
-            dataChanged();
             return false;
         }
 
         return true;
     }
 
-    private class KeyParsingException extends Throwable {
-        private KeyParsingException(Throwable cause) {
+    private String getUserSelectionArg() {
+        return Favorites.PROFILE_ID + '=' + UserManagerCompat.getInstance(mContext)
+                .getSerialNumberForUser(UserHandleCompat.myUserHandle());
+    }
+
+    @Thunk class InvalidBackupException extends IOException {
+
+        private static final long serialVersionUID = 8931456637211665082L;
+
+        @Thunk InvalidBackupException(Throwable cause) {
             super(cause);
         }
 
-        public KeyParsingException(String reason) {
+        @Thunk InvalidBackupException(String reason) {
             super(reason);
+        }
+    }
+
+    public boolean shouldAttemptWorkspaceMigration() {
+        return migrationCompatibleProfileData != null;
+    }
+
+    /**
+     * A class to check if an activity can handle one of the intents from a list of
+     * predefined intents.
+     */
+    private class ItemTypeMatcher {
+
+        private final ArrayList<Intent> mIntents;
+
+        ItemTypeMatcher(int xml_res) {
+            mIntents = xml_res == 0 ? new ArrayList<Intent>() : parseIntents(xml_res);
+        }
+
+        private ArrayList<Intent> parseIntents(int xml_res) {
+            ArrayList<Intent> intents = new ArrayList<Intent>();
+            XmlResourceParser parser = mContext.getResources().getXml(xml_res);
+            try {
+                DefaultLayoutParser.beginDocument(parser, DefaultLayoutParser.TAG_RESOLVE);
+                final int depth = parser.getDepth();
+                int type;
+                while (((type = parser.next()) != XmlPullParser.END_TAG ||
+                        parser.getDepth() > depth) && type != XmlPullParser.END_DOCUMENT) {
+                    if (type != XmlPullParser.START_TAG) {
+                        continue;
+                    } else if (DefaultLayoutParser.TAG_FAVORITE.equals(parser.getName())) {
+                        final String uri = DefaultLayoutParser.getAttributeValue(
+                                parser, DefaultLayoutParser.ATTR_URI);
+                        intents.add(Intent.parseUri(uri, 0));
+                    }
+                }
+            } catch (URISyntaxException | XmlPullParserException | IOException e) {
+                Log.e(TAG, "Unable to parse " + xml_res, e);
+            } finally {
+                parser.close();
+            }
+            return intents;
+        }
+
+        public boolean matches(ActivityInfo activity, PackageManager pm) {
+            for (Intent intent : mIntents) {
+                intent.setPackage(activity.packageName);
+                ResolveInfo info = pm.resolveActivity(intent, 0);
+                if (info != null && (info.activityInfo.name.equals(activity.name)
+                        || info.activityInfo.name.equals(activity.targetActivity))) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }

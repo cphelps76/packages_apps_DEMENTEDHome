@@ -3,36 +3,27 @@ package com.android.cphelps76;
 import android.content.res.Resources;
 import android.database.Cursor;
 import android.database.MatrixCursor;
-import android.graphics.drawable.AnimationDrawable;
-import android.view.View;
-import android.view.View.OnClickListener;
-import android.widget.ImageView;
 import android.widget.ListView;
 import com.android.cphelps76.list.PinnedHeaderListView;
 import com.android.cphelps76.list.SettingsPinnedHeaderAdapter;
 
 import java.util.ArrayList;
-import java.util.List;
+import java.util.Arrays;
 
 public class OverviewSettingsPanel {
     public static final String ANDROID_SETTINGS = "com.android.settings";
-    public static final String ANDROID_THEME_APP = "org.cyanogenmod.theme.chooser";
     public static final String ANDROID_PROTECTED_APPS =
             "com.android.settings.applications.ProtectedAppsActivity";
-    public static final String THEME_SETTINGS =
-            "org.cyanogenmod.theme.chooser.ChooserActivity";
     public static final int HOME_SETTINGS_POSITION = 0;
     public static final int DRAWER_SETTINGS_POSITION = 1;
+    public static final int APP_SETTINGS_POSITION = 2;
 
     private Launcher mLauncher;
-    private View mOverviewPanel;
     private SettingsPinnedHeaderAdapter mSettingsAdapter;
     private PinnedHeaderListView mListView;
-    private String[] mValues;
 
-    OverviewSettingsPanel(Launcher launcher, View overviewPanel) {
+    OverviewSettingsPanel(Launcher launcher) {
         mLauncher = launcher;
-        mOverviewPanel = overviewPanel;
     }
 
     // One time initialization of the SettingsPinnedHeaderAdapter
@@ -47,41 +38,9 @@ public class OverviewSettingsPanel {
                 res.getString(R.string.drawer_settings),
                 res.getString(R.string.app_settings)};
 
-        String[] values;
-        if(mLauncher.isGelIntegrationSupported()) {
-            values = new String[]{
-                    res.getString(R.string.home_screen_search_text),
-                    res.getString(R.string.search_screen_left_text),
-                    res.getString(R.string.scroll_effect_text),
-                    res.getString(R.string.icon_labels),
-                    res.getString(R.string.scrolling_wallpaper),
-                    res.getString(R.string.homescreen_rotation),
-                    res.getString(R.string.grid_size_text)};
-        } else {
-            values = new String[]{
-                    res.getString(R.string.home_screen_search_text),
-                    res.getString(R.string.scroll_effect_text),
-                    res.getString(R.string.icon_labels),
-                    res.getString(R.string.scrolling_wallpaper),
-                    res.getString(R.string.homescreen_rotation),
-                    res.getString(R.string.grid_size_text)};
-        }
-
-        mValues = values;
-
-        String[] valuesDrawer = new String[] {
-                res.getString(R.string.scroll_effect_text),
-                res.getString(R.string.drawer_sorting_text),
-                res.getString(R.string.icon_labels)};
-
-        List<String> valuesAppList = new ArrayList<String>();
-        valuesAppList.add(res.getString(R.string.larger_icons_text));
-        if (!Utilities.isRestrictedProfile(mLauncher)) {
-            valuesAppList.add(res.getString(R.string.protected_app_settings));
-        }
-
-        String[] valuesApp = new String[valuesAppList.size()];
-        valuesApp = valuesAppList.toArray(valuesApp);
+        String[] valuesApp = new String[] {
+                res.getString(R.string.larger_icons_text),
+                res.getString(R.string.protected_app_settings)};
 
         mSettingsAdapter = new SettingsPinnedHeaderAdapter(mLauncher);
         mSettingsAdapter.setHeaders(headers);
@@ -90,9 +49,11 @@ public class OverviewSettingsPanel {
         mSettingsAdapter.addPartition(false, true);
         mSettingsAdapter.mPinnedHeaderCount = headers.length;
 
-        mSettingsAdapter.changeCursor(0, createCursor(headers[0], values));
-        mSettingsAdapter.changeCursor(1, createCursor(headers[1], valuesDrawer));
-        mSettingsAdapter.changeCursor(2, createCursor(headers[2], valuesApp));
+        mSettingsAdapter.changeCursor(HOME_SETTINGS_POSITION,
+                createCursor(headers[0], getValuesHome()));
+        mSettingsAdapter.changeCursor(DRAWER_SETTINGS_POSITION,
+                createCursor(headers[1], getValuesDrawer()));
+        mSettingsAdapter.changeCursor(APP_SETTINGS_POSITION, createCursor(headers[2], valuesApp));
         mListView.setAdapter(mSettingsAdapter);
     }
 
@@ -105,144 +66,42 @@ public class OverviewSettingsPanel {
         return cursor;
     }
 
-    // One time View setup
-    public void initializeViews() {
-        mOverviewPanel.setAlpha(0f);
-        mOverviewPanel
-                .setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
-        ((SlidingUpPanelLayout) mOverviewPanel)
-                .setPanelSlideListener(new SettingsSimplePanelSlideListener());
+    private String[] getValuesHome() {
+        Resources res = mLauncher.getResources();
+        ArrayList<String> values = new ArrayList<String>(Arrays.asList(new String[]{
+                res.getString(R.string.home_screen_search_text),
+                res.getString(R.string.icon_labels),
+                res.getString(R.string.scrolling_wallpaper),
+                res.getString(R.string.grid_size_text),
+                res.getString(R.string.allow_rotation_title)}));
 
-        //Quick Settings Buttons
-        View widgetButton = mLauncher.findViewById(R.id.widget_button);
-        widgetButton.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View arg0) {
-                if (!mLauncher.getWorkspace().isSwitchingState()) {
-                    mLauncher.showAllApps(true, AppsCustomizePagedView.ContentType.Widgets, true);
-                }
-            }
-        });
-        widgetButton.setOnTouchListener(mLauncher.getHapticFeedbackTouchListener());
+        // Add additional external settings.
+        RemoteFolderManager.onInitializeHomeSettings(values, mLauncher);
 
-        View wallpaperButton = mLauncher.findViewById(R.id.wallpaper_button);
-        wallpaperButton.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View arg0) {
-                if (!mLauncher.getWorkspace().isSwitchingState()) {
-                    mLauncher.startWallpaper();
-                }
-            }
-        });
-        wallpaperButton.setOnTouchListener(mLauncher.getHapticFeedbackTouchListener());
-
-        View themesButton = mLauncher.findViewById(R.id.themes_button);
-        themesButton.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View arg0) {
-                if (!mLauncher.getWorkspace().isSwitchingState()) {
-                    mLauncher.startThemeSettings();
-                }
-            }
-        });
-        themesButton.setOnTouchListener(mLauncher.getHapticFeedbackTouchListener());
-
-        View defaultScreenButton = mLauncher.findViewById(R.id.default_screen_button);
-        defaultScreenButton.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View arg0) {
-                if (!mLauncher.getWorkspace().isSwitchingState()) {
-                    mLauncher.getWorkspace().onClickDefaultScreenButton();
-                }
-            }
-        });
-
-        defaultScreenButton.setOnTouchListener(mLauncher.getHapticFeedbackTouchListener());
-
-        //Handle
-        View v = mOverviewPanel.findViewById(R.id.settings_pane_header);
-        ((SlidingUpPanelLayout) mOverviewPanel).setEnableDragViewTouchEvents(true);
-        ((SlidingUpPanelLayout) mOverviewPanel).setDragView(v);
-        v.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (((SlidingUpPanelLayout) mOverviewPanel).isExpanded()) {
-                    ((SlidingUpPanelLayout) mOverviewPanel).collapsePane();
-                } else {
-                    ((SlidingUpPanelLayout) mOverviewPanel).expandPane();
-                }
-            }
-        });
+        String[] valuesArr = new String[values.size()];
+        values.toArray(valuesArr);
+        return valuesArr;
     }
 
-    public void update() {
+    private String[] getValuesDrawer() {
         Resources res = mLauncher.getResources();
-        View widgetButton = mOverviewPanel.findViewById(R.id.widget_button);
-        View wallpaperButton = mOverviewPanel
-                .findViewById(R.id.wallpaper_button);
-        View themesButton = mOverviewPanel.findViewById(R.id.themes_button);
-        View defaultHomePanel = mOverviewPanel.findViewById(R.id.default_screen_button);
+        ArrayList<String> values = new ArrayList<String>(Arrays.asList(new String[]{
+                res.getString(R.string.icon_labels),
+                res.getString(R.string.app_drawer_style),
+                res.getString(R.string.app_drawer_color),
+                res.getString(R.string.fast_scroller),
+                res.getString(R.string.fast_scroller_type),
+                res.getString(R.string.home_screen_search_text)}));
 
-        boolean isAllAppsVisible = mLauncher.isAllAppsVisible();
+        // Add additional external settings.
+        RemoteFolderManager.onInitializeDrawerSettings(values, mLauncher);
 
-        PagedView pagedView = !isAllAppsVisible ? mLauncher.getWorkspace()
-                : mLauncher.getAppsCustomizeContent();
-
-        defaultHomePanel.setVisibility((pagedView.getPageCount() > 1) ?
-                View.VISIBLE : View.GONE);
-
-        if (mLauncher.isAllAppsVisible()) {
-            mSettingsAdapter.changeCursor(0, createCursor(res
-                    .getString(R.string.home_screen_settings), new String[]{}));
-        } else {
-            mSettingsAdapter.changeCursor(0, createCursor(res
-                    .getString(R.string.home_screen_settings), mValues));
-        }
-
-        // Make sure overview panel is drawn above apps customize and collapsed
-        mOverviewPanel.bringToFront();
-        mOverviewPanel.invalidate();
-
-        ((SlidingUpPanelLayout) mOverviewPanel).setPanelHeight(isAllAppsVisible ?
-                res.getDimensionPixelSize(R.dimen.settings_pane_handle)
-                : res.getDimensionPixelSize(R.dimen.sliding_panel_padding));
+        String[] valuesArr = new String[values.size()];
+        values.toArray(valuesArr);
+        return valuesArr;
     }
 
     public void notifyDataSetInvalidated() {
         mSettingsAdapter.notifyDataSetInvalidated();
-    }
-
-
-    class SettingsSimplePanelSlideListener extends SlidingUpPanelLayout.SimplePanelSlideListener {
-        ImageView mAnimatedArrow;
-
-        public SettingsSimplePanelSlideListener() {
-            super();
-            mAnimatedArrow = (ImageView) mOverviewPanel.findViewById(R.id.settings_drag_arrow);
-        }
-
-        @Override
-        public void onPanelCollapsed(View panel) {
-            mAnimatedArrow.setBackgroundResource(R.drawable.transition_arrow_reverse);
-
-            AnimationDrawable frameAnimation = (AnimationDrawable) mAnimatedArrow.getBackground();
-            frameAnimation.start();
-
-            if (mLauncher.updateGridIfNeeded()) {
-                if (mLauncher.getWorkspace().isInOverviewMode()) {
-                    mLauncher.getWorkspace().showOutlines();
-                    mLauncher.mSearchDropTargetBar.hideSearchBar(false);
-                }
-            }
-        }
-
-        @Override
-        public void onPanelExpanded(View panel) {
-            mAnimatedArrow.setBackgroundResource(R.drawable.transition_arrow);
-
-            AnimationDrawable frameAnimation = (AnimationDrawable) mAnimatedArrow.getBackground();
-            frameAnimation.start();
-        }
     }
 }

@@ -18,17 +18,27 @@ package com.android.cphelps76;
 
 import android.app.Application;
 
+import com.android.cphelps76.stats.LauncherStats;
+import com.android.cphelps76.stats.internal.service.AggregationIntentService;
+
 public class LauncherApplication extends Application {
-    @Override
-    public void onCreate() {
-        super.onCreate();
-        LauncherAppState.setApplicationContext(this);
-        LauncherAppState.getInstance();
+
+    private static LauncherStats sLauncherStats = null;
+
+    /**
+     * Get the reference handle for LauncherStats commands
+     *
+     * @return {@link LauncherStats}
+     */
+    public static LauncherStats getLauncherStats() {
+        return sLauncherStats;
     }
 
     @Override
-    public void onTerminate() {
-        super.onTerminate();
-        LauncherAppState.getInstance().onTerminate();
+    public void onCreate() {
+        super.onCreate();
+        sLauncherStats = LauncherStats.getInstance(this);
+        AggregationIntentService.scheduleService(this);
     }
+
 }

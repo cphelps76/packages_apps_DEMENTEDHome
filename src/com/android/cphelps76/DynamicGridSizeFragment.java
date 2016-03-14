@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 The CyanogenMod Project
+ * Copyright (C) 2016 DEMENTED
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,18 +23,19 @@ import android.app.Dialog;
 import android.app.Fragment;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.res.Configuration;
 import android.content.res.Resources;
-import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.os.Bundle;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ArrayAdapter;
+import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -42,7 +43,6 @@ import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.NumberPicker;
 import android.widget.TextView;
-
 import com.android.cphelps76.settings.SettingsProvider;
 
 public class DynamicGridSizeFragment extends Fragment
@@ -56,8 +56,8 @@ public class DynamicGridSizeFragment extends Fragment
 
     ListView mListView;
     View mCurrentSelection;
-    GridSizeArrayAdapter mAdapter;
-    DeviceProfile.GridSize mCurrentSize;
+    GridSizeAdapter mAdapter;
+    InvariantDeviceProfile.GridSize mCurrentSize;
 
     Dialog mDialog;
 
@@ -67,17 +67,17 @@ public class DynamicGridSizeFragment extends Fragment
     View.OnClickListener mSettingsItemListener = new View.OnClickListener() {
         @Override
         public void onClick(View v) {
-            mCurrentSize = DeviceProfile.GridSize.getModeForValue((Integer) v.getTag());
+            mCurrentSize = InvariantDeviceProfile.GridSize.getModeForValue((Integer) v.getTag());
 
             setCleared(mCurrentSelection);
             setSelected(v);
             mCurrentSelection = v;
 
-            if (mCurrentSize == DeviceProfile.GridSize.Custom) {
+            if (mCurrentSize == InvariantDeviceProfile.GridSize.Custom) {
                 showNumberPicker();
             }
 
-            ((GridSizeArrayAdapter) mListView.getAdapter()).notifyDataSetChanged();
+            ((GridSizeAdapter) mListView.getAdapter()).notifyDataSetChanged();
 
             mAdapter.notifyDataSetInvalidated();
             updateGridMetrics();
@@ -106,30 +106,41 @@ public class DynamicGridSizeFragment extends Fragment
             }
         });
 
-        mCurrentSize = DeviceProfile.GridSize.getModeForValue(
+        mCurrentSize = InvariantDeviceProfile.GridSize.getModeForValue(
                 SettingsProvider.getIntCustomDefault(getActivity(),
                 SettingsProvider.SETTINGS_UI_DYNAMIC_GRID_SIZE, 0));
+
+        InvariantDeviceProfile grid = getInvariantDeviceProfile();
+        mCustomGridRows = grid.numRows;
+        mCustomGridColumns = grid.numColumns;
 
         updateGridMetrics();
 
         Resources res = getResources();
-        String[] values = {
-                res.getString(R.string.grid_size_comfortable),
-                res.getString(R.string.grid_size_cozy),
-                res.getString(R.string.grid_size_condensed),
-                res.getString(R.string.grid_size_custom)};
-        mAdapter = new GridSizeArrayAdapter(getActivity(),
-                R.layout.settings_pane_list_item, values);
+        int[] valueResIds = {
+            R.string.grid_size_comfortable,
+            R.string.grid_size_cozy,
+            R.string.grid_size_condensed,
+            R.string.grid_size_custom
+        };
+        mAdapter = new GridSizeAdapter(getActivity(), valueResIds);
         mListView.setAdapter(mAdapter);
+
+        // RTL
+        ImageView navPrev = (ImageView) v.findViewById(R.id.nav_prev);
+        Configuration config = getResources().getConfiguration();
+        if (config.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
+            navPrev.setImageResource(R.drawable.ic_navigation_next);
+        }
 
         return v;
     }
 
     private void updateGridMetrics() {
-        if (mCurrentSize == DeviceProfile.GridSize.Custom) {
+        if (mCurrentSize == InvariantDeviceProfile.GridSize.Custom) {
             mDynamicGrid.setMetrics(mCustomGridRows, mCustomGridColumns);
         } else {
-            DeviceProfile grid = getGrid();
+            InvariantDeviceProfile grid = getInvariantDeviceProfile();
             mDynamicGrid.setMetrics(grid.numRowsBase + mCurrentSize.getValue(),
                     grid.numColumnsBase + mCurrentSize.getValue());
         }
@@ -141,7 +152,13 @@ public class DynamicGridSizeFragment extends Fragment
             DisplayMetrics displaymetrics = new DisplayMetrics();
             getActivity().getWindowManager().getDefaultDisplay().getMetrics(displaymetrics);
             int width = displaymetrics.widthPixels;
-            final ObjectAnimator anim = ObjectAnimator.ofFloat(this, "translationX", width, 0);
+            Configuration config = getResources().getConfiguration();
+            final ObjectAnimator anim;
+            if (config.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
+                anim = ObjectAnimator.ofFloat(this, "translationX", -width, 0);
+            } else {
+                anim = ObjectAnimator.ofFloat(this, "translationX", width, 0);
+            }
 
             final View darkPanel = ((Launcher) getActivity()).getDarkPanel();
             darkPanel.setVisibility(View.VISIBLE);
@@ -186,27 +203,20 @@ public class DynamicGridSizeFragment extends Fragment
         NumberPicker nPRows = (NumberPicker) mDialog.findViewById(R.id.custom_rows);
         NumberPicker nPColumns = (NumberPicker) mDialog.findViewById(R.id.custom_columns);
 
-        DeviceProfile grid = getGrid();
+        InvariantDeviceProfile grid = getInvariantDeviceProfile();
         int rows = grid.numRowsBase;
         int columns = grid.numColumnsBase;
 
-        if (mCustomGridRows == 0) {
-            mCustomGridRows = (int) grid.numRows;
-        }
-        if (mCustomGridColumns == 0) {
-            mCustomGridColumns = (int) grid.numColumns;
-        }
-
-        nPRows.setMinValue(Math.max(MIN_DYNAMIC_GRID_ROWS, rows - DeviceProfile.GRID_SIZE_MIN));
-        nPRows.setMaxValue(rows + DeviceProfile.GRID_SIZE_MAX);
+        nPRows.setMinValue(Math.max(MIN_DYNAMIC_GRID_ROWS, rows - InvariantDeviceProfile.GRID_SIZE_MIN));
+        nPRows.setMaxValue(rows + InvariantDeviceProfile.GRID_SIZE_MAX);
         nPRows.setValue(mCustomGridRows);
         nPRows.setWrapSelectorWheel(false);
         nPRows.setOnValueChangedListener(this);
         nPRows.setDescendantFocusability(NumberPicker.FOCUS_BLOCK_DESCENDANTS);
 
         nPColumns.setMinValue(Math.max(MIN_DYNAMIC_GRID_COLUMNS,
-                columns - DeviceProfile.GRID_SIZE_MIN));
-        nPColumns.setMaxValue(columns + DeviceProfile.GRID_SIZE_MAX);
+                columns - InvariantDeviceProfile.GRID_SIZE_MIN));
+        nPColumns.setMaxValue(columns + InvariantDeviceProfile.GRID_SIZE_MAX);
         nPColumns.setValue(mCustomGridColumns);
         nPColumns.setWrapSelectorWheel(false);
         nPColumns.setOnValueChangedListener(this);
@@ -254,15 +264,28 @@ public class DynamicGridSizeFragment extends Fragment
         mDynamicGrid.setMetrics(mCustomGridRows, mCustomGridColumns);
     }
 
-    private class GridSizeArrayAdapter extends ArrayAdapter<String> {
+    private class GridSizeAdapter extends BaseAdapter {
         Context mContext;
-        String[] mTitles;
+        int[] mTitleResIds;
 
-        public GridSizeArrayAdapter(Context context, int textViewResourceId, String[] objects) {
-            super(context, textViewResourceId, objects);
-
+        public GridSizeAdapter(Context context, int[] resIds) {
             mContext = context;
-            mTitles = objects;
+            mTitleResIds = resIds;
+        }
+
+        @Override
+        public int getCount() {
+            return mTitleResIds.length;
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return position;
+        }
+
+        @Override
+        public Object getItem(int position) {
+            return mContext.getString(mTitleResIds[position]);
         }
 
         @Override
@@ -274,7 +297,12 @@ public class DynamicGridSizeFragment extends Fragment
             }
 
             TextView textView = (TextView) convertView.findViewById(R.id.item_name);
-            textView.setText(mTitles[position]);
+
+            // RTL
+            Configuration config = getResources().getConfiguration();
+            if (config.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
+                textView.setGravity(Gravity.RIGHT);
+            }
 
             // Set selected state
             if (position == mCurrentSize.getValue()) {
@@ -285,14 +313,16 @@ public class DynamicGridSizeFragment extends Fragment
                 setSelected(mCurrentSelection);
             }
 
-            if (position == DeviceProfile.GridSize.Custom.getValue()) {
-                int rows = SettingsProvider.getIntCustomDefault(getActivity(),
-                        SettingsProvider.SETTINGS_UI_HOMESCREEN_ROWS, getGrid().numRowsBase);
-                int columns = SettingsProvider.getIntCustomDefault(getActivity(),
-                        SettingsProvider.SETTINGS_UI_HOMESCREEN_COLUMNS, getGrid().numColumnsBase);
-                String gridSize = rows + " " + "\u00d7" + " " + columns;
+            if (position == InvariantDeviceProfile.GridSize.Custom.getValue()) {
+                InvariantDeviceProfile grid = getInvariantDeviceProfile();
 
-                textView.setText(getString(R.string.grid_size_custom_and_size, gridSize));
+                int rows = SettingsProvider.getIntCustomDefault(getActivity(),
+                        SettingsProvider.SETTINGS_UI_HOMESCREEN_ROWS, grid.numRowsBase);
+                int columns = SettingsProvider.getIntCustomDefault(getActivity(),
+                        SettingsProvider.SETTINGS_UI_HOMESCREEN_COLUMNS, grid.numColumnsBase);
+                textView.setText(mContext.getString(mTitleResIds[position], rows, columns));
+            } else {
+                textView.setText(mTitleResIds[position]);
             }
 
             convertView.setOnClickListener(mSettingsItemListener);
@@ -301,9 +331,9 @@ public class DynamicGridSizeFragment extends Fragment
         }
     }
 
-    private DeviceProfile getGrid() {
+    private InvariantDeviceProfile getInvariantDeviceProfile() {
         LauncherAppState app = LauncherAppState.getInstance();
-        return app.getDynamicGrid().getDeviceProfile();
+        return app.getInvariantDeviceProfile();
     }
 
     private static class GridSizeView extends View {

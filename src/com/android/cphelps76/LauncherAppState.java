@@ -17,27 +17,28 @@
 package com.android.cphelps76;
 
 import android.app.SearchManager;
-import android.content.*;
-import android.content.res.Configuration;
-import android.content.res.Resources;
-import android.database.ContentObserver;
-import android.os.Handler;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.UserManager;
 import android.util.Log;
+
+import com.android.cphelps76.accessibility.LauncherAccessibilityDelegate;
+import com.android.cphelps76.compat.LauncherAppsCompat;
+import com.android.cphelps76.compat.PackageInstallerCompat;
+import com.android.cphelps76.compat.UserManagerCompat;
+import com.android.cphelps76.util.Thunk;
 
 import java.lang.ref.WeakReference;
 
-public class LauncherAppState implements DeviceProfile.DeviceProfileCallbacks {
-    private static final String TAG = "LauncherAppState";
-    private static final String SHARED_PREFERENCES_KEY = "com.android.cphelps76.prefs";
+public class LauncherAppState {
 
     private final AppFilter mAppFilter;
     private final BuildInfo mBuildInfo;
-    private LauncherModel mModel;
-    private IconCache mIconCache;
-    private WidgetPreviewLoader.CacheDb mWidgetPreviewCacheDb;
-    private boolean mIsScreenLarge;
-    private float mScreenDensity;
-    private int mLongPressTimeout = 300;
+    @Thunk final LauncherModel mModel;
+    private final IconCache mIconCache;
+    private final WidgetPreviewLoader mWidgetCache;
+
     private boolean mWallpaperChangedSinceLastCheck;
 
     private static WeakReference<LauncherProvider> sLauncherProvider;
@@ -45,7 +46,9 @@ public class LauncherAppState implements DeviceProfile.DeviceProfileCallbacks {
 
     private static LauncherAppState INSTANCE;
 
-    private DynamicGrid mDynamicGrid;
+    private InvariantDeviceProfile mInvariantDeviceProfile;
+
+    private LauncherAccessibilityDelegate mAccessibilityDelegate;
 
     public static LauncherAppState getInstance() {
         if (INSTANCE == null) {
@@ -80,47 +83,26 @@ public class LauncherAppState implements DeviceProfile.DeviceProfileCallbacks {
             MemoryTracker.startTrackingMe(sContext, "L");
         }
 
-        // set sIsScreenXLarge and mScreenDensity *before* creating icon cache
-        mIsScreenLarge = isScreenLarge(sContext.getResources());
-        mScreenDensity = sContext.getResources().getDisplayMetrics().density;
-
-        recreateWidgetPreviewDb();
-        mIconCache = new IconCache(sContext);
+        mInvariantDeviceProfile = new InvariantDeviceProfile(sContext);
+        mIconCache = new IconCache(sContext, mInvariantDeviceProfile);
+        mWidgetCache = new WidgetPreviewLoader(sContext, mIconCache);
 
         mAppFilter = AppFilter.loadByName(sContext.getString(R.string.app_filter_class));
         mBuildInfo = BuildInfo.loadByName(sContext.getString(R.string.build_info_class));
         mModel = new LauncherModel(this, mIconCache, mAppFilter);
 
-        // Register intent receivers
-        IntentFilter filter = new IntentFilter(Intent.ACTION_PACKAGE_ADDED);
-        filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
-        filter.addAction(Intent.ACTION_PACKAGE_CHANGED);
-        filter.addDataScheme("package");
-        sContext.registerReceiver(mModel, filter);
-        filter = new IntentFilter();
-        filter.addAction(Intent.ACTION_EXTERNAL_APPLICATIONS_AVAILABLE);
-        filter.addAction(Intent.ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE);
-        filter.addAction(Intent.ACTION_LOCALE_CHANGED);
-        filter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);
-        sContext.registerReceiver(mModel, filter);
-        filter = new IntentFilter();
-        filter.addAction(SearchManager.INTENT_GLOBAL_SEARCH_ACTIVITY_CHANGED);
-        sContext.registerReceiver(mModel, filter);
-        filter = new IntentFilter();
-        filter.addAction(SearchManager.INTENT_ACTION_SEARCHABLES_CHANGED);
-        sContext.registerReceiver(mModel, filter);
+        LauncherAppsCompat.getInstance(sContext).addOnAppsChangedCallback(mModel);
 
-        // Register for changes to the favorites
-        ContentResolver resolver = sContext.getContentResolver();
-        resolver.registerContentObserver(LauncherSettings.Favorites.CONTENT_URI, true,
-                mFavoritesObserver);
-    }
-    
-    public void recreateWidgetPreviewDb() {
-        if (mWidgetPreviewCacheDb != null) {
-            mWidgetPreviewCacheDb.close();
-        }
-        mWidgetPreviewCacheDb = new WidgetPreviewLoader.CacheDb(sContext);
+        // Register intent receivers
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_LOCALE_CHANGED);
+        filter.addAction(SearchManager.INTENT_GLOBAL_SEARCH_ACTIVITY_CHANGED);
+        // For handling managed profiles
+        filter.addAction(LauncherAppsCompat.ACTION_MANAGED_PROFILE_ADDED);
+        filter.addAction(LauncherAppsCompat.ACTION_MANAGED_PROFILE_REMOVED);
+
+        sContext.registerReceiver(mModel, filter);
+        UserManagerCompat.getInstance(sContext).enableAndResetCache();
     }
 
     /**
@@ -128,102 +110,60 @@ public class LauncherAppState implements DeviceProfile.DeviceProfileCallbacks {
      */
     public void onTerminate() {
         sContext.unregisterReceiver(mModel);
-
-        ContentResolver resolver = sContext.getContentResolver();
-        resolver.unregisterContentObserver(mFavoritesObserver);
+        final LauncherAppsCompat launcherApps = LauncherAppsCompat.getInstance(sContext);
+        launcherApps.removeOnAppsChangedCallback(mModel);
+        PackageInstallerCompat.getInstance(sContext).onStop();
     }
 
     /**
-     * Receives notifications whenever the user favorites have changed.
+     * Reloads the workspace items from the DB and re-binds the workspace. This should generally
+     * not be called as DB updates are automatically followed by UI update
      */
-    private final ContentObserver mFavoritesObserver = new ContentObserver(new Handler()) {
-        @Override
-        public void onChange(boolean selfChange) {
-            // If the database has ever changed, then we really need to force a reload of the
-            // workspace on the next load
-            mModel.resetLoadedState(false, true);
-            mModel.startLoaderFromBackground();
-        }
-    };
+    public void reloadWorkspace() {
+        mModel.resetLoadedState(false, true);
+        mModel.startLoaderFromBackground();
+    }
+
+    public void recreateWidgetPreviewDb() {
+        mWidgetCache.recreateWidgetPreviewDb();
+    }
 
     LauncherModel setLauncher(Launcher launcher) {
-        if (mModel == null) {
-            throw new IllegalStateException("setLauncher() called before init()");
-        }
+        getLauncherProvider().setLauncherProviderChangeListener(launcher);
         mModel.initialize(launcher);
+        mAccessibilityDelegate = ((launcher != null) && Utilities.ATLEAST_LOLLIPOP) ?
+            new LauncherAccessibilityDelegate(launcher) : null;
         return mModel;
     }
 
-    IconCache getIconCache() {
+    public LauncherAccessibilityDelegate getAccessibilityDelegate() {
+        return mAccessibilityDelegate;
+    }
+
+    public IconCache getIconCache() {
         return mIconCache;
     }
 
-    LauncherModel getModel() {
+    public LauncherModel getModel() {
         return mModel;
-    }
-
-    boolean shouldShowAppOrWidgetProvider(ComponentName componentName) {
-        return mAppFilter == null || mAppFilter.shouldShowApp(componentName);
-    }
-
-    WidgetPreviewLoader.CacheDb getWidgetPreviewCacheDb() {
-        return mWidgetPreviewCacheDb;
     }
 
     static void setLauncherProvider(LauncherProvider provider) {
         sLauncherProvider = new WeakReference<LauncherProvider>(provider);
     }
 
-    static LauncherProvider getLauncherProvider() {
+    public static LauncherProvider getLauncherProvider() {
         return sLauncherProvider.get();
     }
 
     public static String getSharedPreferencesKey() {
-        return SHARED_PREFERENCES_KEY;
+        return LauncherFiles.SHARED_PREFERENCES_KEY;
     }
 
-    DeviceProfile initDynamicGrid(Context context, int minWidth, int minHeight,
-                                  int width, int height,
-                                  int availableWidth, int availableHeight) {
-
-        mDynamicGrid = new DynamicGrid(context,
-                context.getResources(),
-                minWidth, minHeight, width, height,
-                availableWidth, availableHeight);
-        mDynamicGrid.getDeviceProfile().addCallback(this);
-
-        // Update the icon size
-        DeviceProfile grid = mDynamicGrid.getDeviceProfile();
-        grid.updateFromConfiguration(context, context.getResources(), width, height,
-                availableWidth, availableHeight);
-        return grid;
+    public WidgetPreviewLoader getWidgetCache() {
+        return mWidgetCache;
     }
-    public DynamicGrid getDynamicGrid() {
-        return mDynamicGrid;
-    }
-
-    public boolean isScreenLarge() {
-        return mIsScreenLarge;
-    }
-
-    // Need a version that doesn't require an instance of LauncherAppState for the wallpaper picker
-    public static boolean isScreenLarge(Resources res) {
-        return res.getBoolean(R.bool.is_large_tablet);
-    }
-
-    public static boolean isScreenLandscape(Context context) {
-        return context.getResources().getConfiguration().orientation ==
-            Configuration.ORIENTATION_LANDSCAPE;
-    }
-
-    public float getScreenDensity() {
-        return mScreenDensity;
-    }
-
-    public int getLongPressTimeout() {
-        return mLongPressTimeout;
-    }
-
+    
     public void onWallpaperChanged() {
         mWallpaperChangedSinceLastCheck = true;
     }
@@ -234,15 +174,12 @@ public class LauncherAppState implements DeviceProfile.DeviceProfileCallbacks {
         return result;
     }
 
-    @Override
-    public void onAvailableSizeChanged(DeviceProfile grid) {
-        Utilities.setIconSize(grid.iconSizePx);
+    public InvariantDeviceProfile getInvariantDeviceProfile() {
+        return mInvariantDeviceProfile;
     }
 
-    public static boolean isDisableAllApps() {
-        // Returns false on non-dogfood builds.
-        return getInstance().mBuildInfo.isDogfoodBuild() &&
-                Launcher.isPropertyEnabled(Launcher.DISABLE_ALL_APPS_PROPERTY);
+    public void initInvariantDeviceProfile() {
+        mInvariantDeviceProfile = new InvariantDeviceProfile(sContext);
     }
 
     public static boolean isDogfoodBuild() {

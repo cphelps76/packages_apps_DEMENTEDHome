@@ -22,30 +22,26 @@ import android.content.SharedPreferences;
 public final class SettingsProvider {
     public static final String SETTINGS_KEY = "trebuchet_preferences";
 
-    public static final String SETTINGS_CHANGED = "settings_changed";
-
     public static final String SETTINGS_UI_HOMESCREEN_DEFAULT_SCREEN_ID = "ui_homescreen_default_screen_id";
     public static final String SETTINGS_UI_HOMESCREEN_SEARCH = "ui_homescreen_search";
-    public static final String SETTINGS_UI_HOMESCREEN_SEARCH_SCREEN_LEFT = "ui_homescreen_search_screen_left";
     public static final String SETTINGS_UI_HOMESCREEN_HIDE_ICON_LABELS = "ui_homescreen_general_hide_icon_labels";
-    public static final String SETTINGS_UI_HOMESCREEN_SCROLLING_TRANSITION_EFFECT = "ui_homescreen_scrolling_transition_effect";
     public static final String SETTINGS_UI_HOMESCREEN_SCROLLING_WALLPAPER_SCROLL = "ui_homescreen_scrolling_wallpaper_scroll";
-    public static final String SETTINGS_UI_HOMESCREEN_ROTATION = "ui_homescreen_rotation";
-    public static final String SETTINGS_UI_HOMESCREEN_SCROLLING_PAGE_OUTLINES = "ui_homescreen_scrolling_page_outlines";
-    public static final String SETTINGS_UI_HOMESCREEN_SCROLLING_FADE_ADJACENT = "ui_homescreen_scrolling_fade_adjacent";
+    public static final String SETTINGS_UI_HOMESCREEN_REMOTE_FOLDER = "ui_homescreen_remote_folder";
+    public static final String SETTINGS_UI_DRAWER_REMOTE_APPS = "ui_drawer_remote_apps";
     public static final String SETTINGS_UI_DYNAMIC_GRID_SIZE = "ui_dynamic_grid_size";
     public static final String SETTINGS_UI_HOMESCREEN_ROWS = "ui_homescreen_rows";
     public static final String SETTINGS_UI_HOMESCREEN_COLUMNS = "ui_homescreen_columns";
-    public static final String SETTINGS_UI_DRAWER_SCROLLING_TRANSITION_EFFECT = "ui_drawer_scrolling_transition_effect";
-    public static final String SETTINGS_UI_DRAWER_SCROLLING_FADE_ADJACENT = "ui_drawer_scrolling_fade_adjacent";
-    public static final String SETTINGS_UI_DRAWER_REMOVE_HIDDEN_APPS_SHORTCUTS = "ui_drawer_remove_hidden_apps_shortcuts";
-    public static final String SETTINGS_UI_DRAWER_REMOVE_HIDDEN_APPS_WIDGETS = "ui_drawer_remove_hidden_apps_widgets";
     public static final String SETTINGS_UI_DRAWER_HIDE_ICON_LABELS = "ui_drawer_hide_icon_labels";
+    public static final String SETTINGS_UI_DRAWER_STYLE_USE_COMPACT = "ui_drawer_style_compact";
+    public static final String SETTINGS_UI_DRAWER_DARK = "ui_drawer_dark";
+    public static final String SETTINGS_UI_USE_SCROLLER = "ui_scroller";
+    public static final String SETTINGS_UI_USE_HORIZONTAL_SCRUBBER = "ui_horizontal_scrubber";
+    public static final String SETTINGS_UI_DRAWER_SEARCH = "ui_drawer_search";
     public static final String SETTINGS_UI_GENERAL_ICONS_LARGE = "ui_general_icons_large";
-    public static final String SETTINGS_UI_DRAWER_SORT_MODE = "ui_drawer_sort_mode";
+    public static final String SETTINGS_UI_ALLOW_ROTATION = "ui_allow_rotation";
 
     public static SharedPreferences get(Context context) {
-        return context.getSharedPreferences(SETTINGS_KEY, Context.MODE_MULTI_PROCESS);
+        return context.getSharedPreferences(SETTINGS_KEY, Context.MODE_PRIVATE);
     }
 
     public static int getIntCustomDefault(Context context, String key, int def) {
@@ -86,5 +82,21 @@ public final class SettingsProvider {
 
     public static void putInt(Context context, String key, int value) {
         get(context).edit().putInt(key, value).commit();
+    }
+
+    public static boolean changeBoolean(Context context, String key, int defaultRes) {
+        boolean def = context.getResources().getBoolean(defaultRes);
+        boolean val = !SettingsProvider.getBooleanCustomDefault(context, key, def);
+        putBoolean(context, key, val);
+        return val;
+    }
+
+    public static void putBoolean(Context context, String key, int res) {
+        boolean val = context.getResources().getBoolean(res);
+        putBoolean(context, key, val);
+    }
+
+    public static void putBoolean(Context context, String key, boolean value) {
+        get(context).edit().putBoolean(key, value).commit();
     }
 }

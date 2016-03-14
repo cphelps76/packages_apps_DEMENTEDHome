@@ -24,6 +24,7 @@ import android.animation.ValueAnimator.AnimatorUpdateListener;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
@@ -36,45 +37,65 @@ import android.view.accessibility.AccessibilityManager;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Interpolator;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
 import android.widget.TextView;
+
+import com.android.cphelps76.accessibility.LauncherAccessibilityDelegate;
+import com.android.cphelps76.util.Thunk;
 
 import java.util.ArrayList;
 
 /**
  * A ViewGroup that coordinates dragging across its descendants
  */
-public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChangeListener {
-    private DragController mDragController;
-    private int[] mTmpXY = new int[2];
+public class DragLayer extends InsettableFrameLayout {
+
+    public static final int ANIMATION_END_DISAPPEAR = 0;
+    public static final int ANIMATION_END_REMAIN_VISIBLE = 2;
+
+    // Scrim color without any alpha component.
+    private static final int SCRIM_COLOR = Color.BLACK & 0x00FFFFFF;
+
+    private final int[] mTmpXY = new int[2];
+
+    @Thunk DragController mDragController;
 
     private int mXDown, mYDown;
     private Launcher mLauncher;
 
     // Variables relating to resizing widgets
-    private final ArrayList<AppWidgetResizeFrame> mResizeFrames =
-            new ArrayList<AppWidgetResizeFrame>();
+    private final ArrayList<AppWidgetResizeFrame> mResizeFrames = new ArrayList<>();
+    private final boolean mIsRtl;
     private AppWidgetResizeFrame mCurrentResizeFrame;
 
     // Variables relating to animation of views after drop
     private ValueAnimator mDropAnim = null;
-    private ValueAnimator mFadeOutAnim = null;
-    private TimeInterpolator mCubicEaseOutInterpolator = new DecelerateInterpolator(1.5f);
-    private DragView mDropView = null;
-    private int mAnchorViewInitialScrollX = 0;
-    private View mAnchorView = null;
+    private final TimeInterpolator mCubicEaseOutInterpolator = new DecelerateInterpolator(1.5f);
+    @Thunk DragView mDropView = null;
+    @Thunk int mAnchorViewInitialScrollX = 0;
+    @Thunk View mAnchorView = null;
 
     private boolean mHoverPointClosesFolder = false;
-    private Rect mHitRect = new Rect();
-    public static final int ANIMATION_END_DISAPPEAR = 0;
-    public static final int ANIMATION_END_FADE_OUT = 1;
-    public static final int ANIMATION_END_REMAIN_VISIBLE = 2;
+    private final Rect mHitRect = new Rect();
 
     private TouchCompleteListener mTouchCompleteListener;
 
-    private final Rect mInsets = new Rect();
+    private View mOverlayView;
+    private int mTopViewIndex;
+    private int mChildCountOnLastUpdate = -1;
 
-    private int mDragViewIndex;
+    // Darkening scrim
+    private float mBackgroundAlpha = 0;
+
+    // Related to adjacent page hints
+    private final Rect mScrollChildPosition = new Rect();
+    private boolean mInScrollArea;
+    private boolean mShowPageHints;
+    private Drawable mLeftHoverDrawable;
+    private Drawable mRightHoverDrawable;
+    private Drawable mLeftHoverDrawableActive;
+    private Drawable mRightHoverDrawableActive;
+
+    private boolean mBlockTouches = false;
 
     /**
      * Used to create a new DragLayer from XML.
@@ -88,10 +109,13 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
         // Disable multitouch across the workspace/all apps/customize tray
         setMotionEventSplittingEnabled(false);
         setChildrenDrawingOrderEnabled(true);
-        setOnHierarchyChangeListener(this);
 
-        mLeftHoverDrawable = getResources().getDrawable(R.drawable.page_hover_left_holo);
-        mRightHoverDrawable = getResources().getDrawable(R.drawable.page_hover_right_holo);
+        final Resources res = getResources();
+        mLeftHoverDrawable = res.getDrawable(R.drawable.page_hover_left);
+        mRightHoverDrawable = res.getDrawable(R.drawable.page_hover_right);
+        mLeftHoverDrawableActive = res.getDrawable(R.drawable.page_hover_left_active);
+        mRightHoverDrawableActive = res.getDrawable(R.drawable.page_hover_right_active);
+        mIsRtl = Utilities.isRtl(res);
     }
 
     public void setup(Launcher launcher, DragController controller) {
@@ -104,43 +128,18 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
         return mDragController.dispatchKeyEvent(event) || super.dispatchKeyEvent(event);
     }
 
-    @Override
-    protected boolean fitSystemWindows(Rect insets) {
-        final int n = getChildCount();
-        for (int i = 0; i < n; i++) {
-            final View child = getChildAt(i);
-            if (child.getId() == R.id.overview_panel) {
-                LinearLayout layout = (LinearLayout)
-                        child.findViewById(R.id.settings_container);
-                FrameLayout.LayoutParams lp =
-                        (FrameLayout.LayoutParams) layout.getLayoutParams();
-                lp.bottomMargin += insets.bottom - mInsets.bottom;
-                layout.setLayoutParams(lp);
-                continue;
-            }
-            setInsets(child, insets, mInsets);
-        }
-        mInsets.set(insets);
-        return true; // I'll take it from here
+    public void showOverlayView(View overlayView) {
+        LayoutParams lp = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT);
+        mOverlayView = overlayView;
+        addView(overlayView, lp);
+
+        // ensure that the overlay view stays on top. we can't use drawing order for this
+        // because in API level 16 touch dispatch doesn't respect drawing order.
+        mOverlayView.bringToFront();
     }
 
-    @Override
-    public void addView(View child, int index, android.view.ViewGroup.LayoutParams params) {
-        super.addView(child, index, params);
-        setInsets(child, mInsets, new Rect());
-    }
-
-    private void setInsets(View child, Rect newInsets, Rect oldInsets) {
-        final FrameLayout.LayoutParams flp = (FrameLayout.LayoutParams) child.getLayoutParams();
-        if (child instanceof Insettable) {
-            ((Insettable) child).setInsets(newInsets);
-        } else {
-            flp.topMargin += (newInsets.top - oldInsets.top);
-            flp.leftMargin += (newInsets.left - oldInsets.left);
-            flp.rightMargin += (newInsets.right - oldInsets.right);
-            flp.bottomMargin += (newInsets.bottom - oldInsets.bottom);
-        }
-        child.setLayoutParams(flp);
+    public void dismissOverlayView() {
+        removeView(mOverlayView);
     }
 
     private boolean isEventOverFolderTextRegion(Folder folder, MotionEvent ev) {
@@ -159,10 +158,26 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
         return false;
     }
 
+    private boolean isEventOverDropTargetBar(MotionEvent ev) {
+        getDescendantRectRelativeToSelf(mLauncher.getSearchDropTargetBar(), mHitRect);
+        if (mHitRect.contains((int) ev.getX(), (int) ev.getY())) {
+            return true;
+        }
+        return false;
+    }
+
+    public void setBlockTouch(boolean block) {
+        mBlockTouches = block;
+    }
+
     private boolean handleTouchDown(MotionEvent ev, boolean intercept) {
         Rect hitRect = new Rect();
         int x = (int) ev.getX();
         int y = (int) ev.getY();
+
+        if (mBlockTouches) {
+            return true;
+        }
 
         for (AppWidgetResizeFrame child: mResizeFrames) {
             child.getHitRect(hitRect);
@@ -178,8 +193,7 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
         }
 
         Folder currentFolder = mLauncher.getWorkspace().getOpenFolder();
-        if (currentFolder != null && !mLauncher.getLauncherClings().isFolderClingVisible() &&
-                intercept) {
+        if (currentFolder != null && intercept) {
             if (currentFolder.isEditingName()) {
                 if (!isEventOverFolderTextRegion(currentFolder, ev)) {
                     currentFolder.dismissEditingName();
@@ -187,10 +201,16 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
                 }
             }
 
-            getDescendantRectRelativeToSelf(currentFolder, hitRect);
             if (!isEventOverFolder(currentFolder, ev)) {
-                mLauncher.closeFolder();
-                return true;
+                if (isInAccessibleDrag()) {
+                    // Do not close the folder if in drag and drop.
+                    if (!isEventOverDropTargetBar(ev)) {
+                        return true;
+                    }
+                } else {
+                    mLauncher.closeFolder();
+                    return true;
+                }
             }
         }
         return false;
@@ -227,11 +247,12 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
                         getContext().getSystemService(Context.ACCESSIBILITY_SERVICE);
             if (accessibilityManager.isTouchExplorationEnabled()) {
                 final int action = ev.getAction();
-                boolean isOverFolder;
+                boolean isOverFolderOrSearchBar;
                 switch (action) {
                     case MotionEvent.ACTION_HOVER_ENTER:
-                        isOverFolder = isEventOverFolder(currentFolder, ev);
-                        if (!isOverFolder) {
+                        isOverFolderOrSearchBar = isEventOverFolder(currentFolder, ev) ||
+                            (isInAccessibleDrag() && isEventOverDropTargetBar(ev));
+                        if (!isOverFolderOrSearchBar) {
                             sendTapOutsideFolderAccessibilityEvent(currentFolder.isEditingName());
                             mHoverPointClosesFolder = true;
                             return true;
@@ -239,12 +260,13 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
                         mHoverPointClosesFolder = false;
                         break;
                     case MotionEvent.ACTION_HOVER_MOVE:
-                        isOverFolder = isEventOverFolder(currentFolder, ev);
-                        if (!isOverFolder && !mHoverPointClosesFolder) {
+                        isOverFolderOrSearchBar = isEventOverFolder(currentFolder, ev) ||
+                            (isInAccessibleDrag() && isEventOverDropTargetBar(ev));
+                        if (!isOverFolderOrSearchBar && !mHoverPointClosesFolder) {
                             sendTapOutsideFolderAccessibilityEvent(currentFolder.isEditingName());
                             mHoverPointClosesFolder = true;
                             return true;
-                        } else if (!isOverFolder) {
+                        } else if (!isOverFolderOrSearchBar) {
                             return true;
                         }
                         mHoverPointClosesFolder = false;
@@ -267,11 +289,21 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
         }
     }
 
+    private boolean isInAccessibleDrag() {
+        LauncherAccessibilityDelegate delegate = LauncherAppState
+                .getInstance().getAccessibilityDelegate();
+        return delegate != null && delegate.isInAccessibleDrag();
+    }
+
     @Override
     public boolean onRequestSendAccessibilityEvent(View child, AccessibilityEvent event) {
         Folder currentFolder = mLauncher.getWorkspace().getOpenFolder();
         if (currentFolder != null) {
             if (child == currentFolder) {
+                return super.onRequestSendAccessibilityEvent(child, event);
+            }
+
+            if (isInAccessibleDrag() && child instanceof SearchDropTargetBar) {
                 return super.onRequestSendAccessibilityEvent(child, event);
             }
             // Skip propagating onRequestSendAccessibilityEvent all for other children
@@ -287,6 +319,10 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
         if (currentFolder != null) {
             // Only add the folder as a child for accessibility when it is open
             childrenForAccessibility.add(currentFolder);
+
+            if (isInAccessibleDrag()) {
+                childrenForAccessibility.add(mLauncher.getSearchDropTargetBar());
+            }
         } else {
             super.addChildrenForAccessibility(childrenForAccessibility);
         }
@@ -306,6 +342,10 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
 
         int x = (int) ev.getX();
         int y = (int) ev.getY();
+
+        if (mBlockTouches) {
+            return true;
+        }
 
         if (action == MotionEvent.ACTION_DOWN) {
             if (handleTouchDown(ev, false)) {
@@ -408,15 +448,41 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
         return mDragController.dispatchUnhandledMove(focused, direction);
     }
 
-    public static class LayoutParams extends FrameLayout.LayoutParams {
+    @Override
+    public LayoutParams generateLayoutParams(AttributeSet attrs) {
+        return new LayoutParams(getContext(), attrs);
+    }
+
+    @Override
+    protected LayoutParams generateDefaultLayoutParams() {
+        return new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
+    }
+
+    // Override to allow type-checking of LayoutParams.
+    @Override
+    protected boolean checkLayoutParams(ViewGroup.LayoutParams p) {
+        return p instanceof LayoutParams;
+    }
+
+    @Override
+    protected LayoutParams generateLayoutParams(ViewGroup.LayoutParams p) {
+        return new LayoutParams(p);
+    }
+
+    public static class LayoutParams extends InsettableFrameLayout.LayoutParams {
         public int x, y;
         public boolean customPosition = false;
 
-        /**
-         * {@inheritDoc}
-         */
+        public LayoutParams(Context c, AttributeSet attrs) {
+            super(c, attrs);
+        }
+
         public LayoutParams(int width, int height) {
             super(width, height);
+        }
+
+        public LayoutParams(ViewGroup.LayoutParams lp) {
+            super(lp);
         }
 
         public void setWidth(int width) {
@@ -554,6 +620,10 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
             // the drag view about the scaled child view.
             toY += Math.round(toScale * tv.getPaddingTop());
             toY -= dragView.getMeasuredHeight() * (1 - toScale) / 2;
+            if (dragView.getDragVisualizeOffset() != null) {
+                toY -=  Math.round(toScale * dragView.getDragVisualizeOffset().y);
+            }
+
             toX -= (dragView.getMeasuredWidth() - Math.round(scale * child.getMeasuredWidth())) / 2;
         } else if (child instanceof FolderIcon) {
             // Account for holographic blur padding on the drag view
@@ -622,8 +692,7 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
             final Runnable onCompleteRunnable, final int animationEndStyle, View anchorView) {
 
         // Calculate the duration of the animation based on the object's distance
-        final float dist = (float) Math.sqrt(Math.pow(to.left - from.left, 2) +
-                Math.pow(to.top - from.top, 2));
+        final float dist = (float) Math.hypot(to.left - from.left, to.top - from.top);
         final Resources res = getResources();
         final float maxDist = (float) res.getInteger(R.integer.config_dropAnimMaxDist);
 
@@ -691,7 +760,6 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
             final int animationEndStyle, View anchorView) {
         // Clean up the previous animations
         if (mDropAnim != null) mDropAnim.cancel();
-        if (mFadeOutAnim != null) mFadeOutAnim.cancel();
 
         // Show the drop view if it was previously hidden
         mDropView = view;
@@ -719,9 +787,6 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
                 case ANIMATION_END_DISAPPEAR:
                     clearAnimatedView();
                     break;
-                case ANIMATION_END_FADE_OUT:
-                    fadeOutDragView();
-                    break;
                 case ANIMATION_END_REMAIN_VISIBLE:
                     break;
                 }
@@ -745,68 +810,70 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
         return mDropView;
     }
 
-    private void fadeOutDragView() {
-        mFadeOutAnim = new ValueAnimator();
-        mFadeOutAnim.setDuration(150);
-        mFadeOutAnim.setFloatValues(0f, 1f);
-        mFadeOutAnim.removeAllUpdateListeners();
-        mFadeOutAnim.addUpdateListener(new AnimatorUpdateListener() {
-            public void onAnimationUpdate(ValueAnimator animation) {
-                final float percent = (Float) animation.getAnimatedValue();
-
-                float alpha = 1 - percent;
-                mDropView.setAlpha(alpha);
-            }
-        });
-        mFadeOutAnim.addListener(new AnimatorListenerAdapter() {
-            public void onAnimationEnd(Animator animation) {
-                if (mDropView != null) {
-                    mDragController.onDeferredEndDrag(mDropView);
-                }
-                mDropView = null;
-                invalidate();
-            }
-        });
-        mFadeOutAnim.start();
-    }
-
     @Override
     public void onChildViewAdded(View parent, View child) {
+        super.onChildViewAdded(parent, child);
+        if (mOverlayView != null) {
+            // ensure that the overlay view stays on top. we can't use drawing order for this
+            // because in API level 16 touch dispatch doesn't respect drawing order.
+            mOverlayView.bringToFront();
+        }
         updateChildIndices();
     }
 
     @Override
     public void onChildViewRemoved(View parent, View child) {
+        super.onChildViewRemoved(parent, child);
+        updateChildIndices();
+    }
+
+    @Override
+    public void bringChildToFront(View child) {
+        super.bringChildToFront(child);
+        if (child != mOverlayView && mOverlayView != null) {
+            // ensure that the overlay view stays on top. we can't use drawing order for this
+            // because in API level 16 touch dispatch doesn't respect drawing order.
+            mOverlayView.bringToFront();
+        }
         updateChildIndices();
     }
 
     private void updateChildIndices() {
-        mDragViewIndex = -1;
+        mTopViewIndex = -1;
         int childCount = getChildCount();
         for (int i = 0; i < childCount; i++) {
             if (getChildAt(i) instanceof DragView) {
-                mDragViewIndex = i;
+                mTopViewIndex = i;
             }
         }
+        mChildCountOnLastUpdate = childCount;
     }
 
     @Override
     protected int getChildDrawingOrder(int childCount, int i) {
-        if (mDragViewIndex == -1) {
+        if (mChildCountOnLastUpdate != childCount) {
+            // between platform versions 17 and 18, behavior for onChildViewRemoved / Added changed.
+            // Pre-18, the child was not added / removed by the time of those callbacks. We need to
+            // force update our representation of things here to avoid crashing on pre-18 devices
+            // in certain instances.
+            updateChildIndices();
+        }
+
+        // i represents the current draw iteration
+        if (mTopViewIndex == -1) {
+            // in general we do nothing
             return i;
-        } else if (i == mDragViewIndex) {
-            return getChildCount()-1;
-        } else if (i < mDragViewIndex) {
+        } else if (i == childCount - 1) {
+            // if we have a top index, we return it when drawing last item (highest z-order)
+            return mTopViewIndex;
+        } else if (i < mTopViewIndex) {
             return i;
         } else {
-            // i > mDragViewIndex
-            return i-1;
+            // for indexes greater than the top index, we fetch one item above to shift for the
+            // displacement of the top index
+            return i + 1;
         }
     }
-
-    private boolean mInScrollArea;
-    private Drawable mLeftHoverDrawable;
-    private Drawable mRightHoverDrawable;
 
     void onEnterScrollArea(int direction) {
         mInScrollArea = true;
@@ -818,38 +885,74 @@ public class DragLayer extends FrameLayout implements ViewGroup.OnHierarchyChang
         invalidate();
     }
 
-    /**
-     * Note: this is a reimplementation of View.isLayoutRtl() since that is currently hidden api.
-     */
-    public boolean isLayoutRtl() {
-        return (getLayoutDirection() == LAYOUT_DIRECTION_RTL);
+    void showPageHints() {
+        mShowPageHints = true;
+        Workspace workspace = mLauncher.getWorkspace();
+        getDescendantRectRelativeToSelf(workspace.getChildAt(workspace.numCustomPages()),
+                mScrollChildPosition);
+        invalidate();
+    }
+
+    void hidePageHints() {
+        mShowPageHints = false;
+        invalidate();
     }
 
     @Override
     protected void dispatchDraw(Canvas canvas) {
-        super.dispatchDraw(canvas);
+        // Draw the background below children.
+        if (mBackgroundAlpha > 0.0f) {
+            int alpha = (int) (mBackgroundAlpha * 255);
+            canvas.drawColor((alpha << 24) | SCRIM_COLOR);
+        }
 
-        if (mInScrollArea && !LauncherAppState.getInstance().isScreenLarge()) {
+        super.dispatchDraw(canvas);
+    }
+
+    private void drawPageHints(Canvas canvas) {
+        if (mShowPageHints) {
             Workspace workspace = mLauncher.getWorkspace();
             int width = getMeasuredWidth();
-            Rect childRect = new Rect();
-            getDescendantRectRelativeToSelf(workspace.getChildAt(0), childRect);
-
             int page = workspace.getNextPage();
-            final boolean isRtl = isLayoutRtl();
-            CellLayout leftPage = (CellLayout) workspace.getChildAt(isRtl ? page + 1 : page - 1);
-            CellLayout rightPage = (CellLayout) workspace.getChildAt(isRtl ? page - 1 : page + 1);
+            CellLayout leftPage = (CellLayout) workspace.getChildAt(mIsRtl ? page + 1 : page - 1);
+            CellLayout rightPage = (CellLayout) workspace.getChildAt(mIsRtl ? page - 1 : page + 1);
 
-            if (leftPage != null && leftPage.getIsDragOverlapping()) {
-                mLeftHoverDrawable.setBounds(0, childRect.top,
-                        mLeftHoverDrawable.getIntrinsicWidth(), childRect.bottom);
-                mLeftHoverDrawable.draw(canvas);
-            } else if (rightPage != null && rightPage.getIsDragOverlapping()) {
-                mRightHoverDrawable.setBounds(width - mRightHoverDrawable.getIntrinsicWidth(),
-                        childRect.top, width, childRect.bottom);
-                mRightHoverDrawable.draw(canvas);
+            if (leftPage != null && leftPage.isDragTarget()) {
+                Drawable left = mInScrollArea && leftPage.getIsDragOverlapping() ?
+                        mLeftHoverDrawableActive : mLeftHoverDrawable;
+                left.setBounds(0, mScrollChildPosition.top,
+                        left.getIntrinsicWidth(), mScrollChildPosition.bottom);
+                left.draw(canvas);
+            }
+            if (rightPage != null && rightPage.isDragTarget()) {
+                Drawable right = mInScrollArea && rightPage.getIsDragOverlapping() ?
+                        mRightHoverDrawableActive : mRightHoverDrawable;
+                right.setBounds(width - right.getIntrinsicWidth(),
+                        mScrollChildPosition.top, width, mScrollChildPosition.bottom);
+                right.draw(canvas);
             }
         }
+    }
+
+    protected boolean drawChild(Canvas canvas, View child, long drawingTime) {
+        boolean ret = super.drawChild(canvas, child, drawingTime);
+
+        // We want to draw the page hints above the workspace, but below the drag view.
+        if (child instanceof Workspace) {
+            drawPageHints(canvas);
+        }
+        return ret;
+    }
+
+    public void setBackgroundAlpha(float alpha) {
+        if (alpha != mBackgroundAlpha) {
+            mBackgroundAlpha = alpha;
+            invalidate();
+        }
+    }
+
+    public float getBackgroundAlpha() {
+        return mBackgroundAlpha;
     }
 
     public void setTouchCompleteListener(TouchCompleteListener listener) {

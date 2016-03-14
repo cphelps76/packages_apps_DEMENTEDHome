@@ -15,7 +15,7 @@
 -->
 <com.android.cphelps76.Hotseat
     xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:launcher="http://schemas.android.com/apk/res-auto/com.android.cphelps76">
+    xmlns:launcher="http://schemas.android.com/apk/res-auto">
     <com.android.cphelps76.CellLayout
         android:id="@+id/layout"
         android:layout_width="wrap_content"

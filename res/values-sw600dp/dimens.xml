@@ -15,19 +15,19 @@
 -->
 
 <resources>
-    <dimen name="app_icon_size">64dp</dimen>
+<!-- All Apps -->
+    <dimen name="all_apps_grid_view_start_margin">0dp</dimen>
+    <dimen name="all_apps_grid_section_text_size">26sp</dimen>
+    <dimen name="all_apps_icon_top_bottom_padding">12dp</dimen>
+    <dimen name="all_apps_background_canvas_width">850dp</dimen>
+    <dimen name="all_apps_background_canvas_height">525dp</dimen>
 
-<!-- AppsCustomize -->
-    <dimen name="apps_customize_tab_bar_height">60dp</dimen>
-    <dimen name="apps_customize_tab_bar_margin_top">8dp</dimen>
-    <dimen name="app_widget_preview_label_margin_top">8dp</dimen>
-    <dimen name="app_widget_preview_label_margin_left">@dimen/app_widget_preview_padding_left</dimen>
-    <dimen name="app_widget_preview_label_margin_right">@dimen/app_widget_preview_padding_right</dimen>
+<!-- Cling -->
+    <dimen name="cling_migration_logo_height">400dp</dimen>
+    <dimen name="cling_migration_logo_width">274dp</dimen>
+    <dimen name="cling_migration_bg_size">600dp</dimen>
+    <dimen name="cling_migration_bg_shift">-300dp</dimen>
+    <dimen name="cling_migration_content_margin">64dp</dimen>
+    <dimen name="cling_migration_content_width">280dp</dimen>
 
-    <dimen name="sliding_panel_padding">180dp</dimen>
-    <dimen name="overview_panel_button_spacing">32dp</dimen>
-
-    <!-- Dynamic Grid settings -->
-    <dimen name="dynamic_grid_size_image_width">300dp</dimen>
-    <dimen name="dynamic_grid_size_image_height">300dp</dimen>
 </resources>
