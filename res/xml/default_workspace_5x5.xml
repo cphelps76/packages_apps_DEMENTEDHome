@@ -147,9 +147,6 @@
             launcher:packageName="com.android.dialer"
             launcher:className="com.android.dialer.DialtactsActivity" />
         <favorite
-            launcher:packageName="com.cyngn.dialer"
-            launcher:className="com.android.dialer.DialtactsActivity" />
-        <favorite
             launcher:packageName="com.android.contacts"
             launcher:className="com.android.contacts.activities.PeopleActivity" />
     </resolve>
@@ -172,6 +169,9 @@
         launcher:screen="3"
         launcher:x="2"
         launcher:y="0" >
+        <favorite
+            launcher:packageName="org.cyanogenmod.gello.browser"
+            launcher:className="com.android.browser.BrowserActivity" />
         <favorite
             launcher:packageName="com.android.browser"
             launcher:className="com.android.browser.BrowserActivity" />

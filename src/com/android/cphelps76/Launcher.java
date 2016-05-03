@@ -523,7 +523,6 @@ public class Launcher extends Activity
         mAppWidgetManager = AppWidgetManagerCompat.getInstance(this);
 
         mAppWidgetHost = new LauncherAppWidgetHost(this, APPWIDGET_HOST_ID);
-        mAppWidgetHost.startListening();
 
         if (sRemoteFolderManager == null) {
             sRemoteFolderManager = new RemoteFolderManager(this);
@@ -1099,6 +1098,8 @@ public class Launcher extends Activity
         if (mLauncherCallbacks != null) {
             mLauncherCallbacks.onStart();
         }
+        // If AppwidgetService failed to bind in onCreate, this will attempt binding again.
+        onAppWidgetHostReset();
     }
 
     @Override
@@ -1214,7 +1215,7 @@ public class Launcher extends Activity
         Fragment gridFragment = getFragmentManager().findFragmentByTag(
                 DynamicGridSizeFragment.DYNAMIC_GRID_SIZE_FRAGMENT);
         if (gridFragment != null) {
-            mDynamicGridSizeFragment.setSize();
+            ((DynamicGridSizeFragment) gridFragment).setSize();
             unlockScreenOrientation(true);
         }
     }
@@ -1927,6 +1928,8 @@ public class Launcher extends Activity
      * @param size The new grid size to set the workspace to.
      */
     public void setDynamicGridSize(InvariantDeviceProfile.GridSize size) {
+        if (size == null) return;
+
         int gridSize = SettingsProvider.getIntCustomDefault(this,
                 SettingsProvider.SETTINGS_UI_DYNAMIC_GRID_SIZE, 0);
         boolean customValuesChanged = false;
@@ -2814,7 +2817,7 @@ public class Launcher extends Activity
             Fragment gridFragment = getFragmentManager().findFragmentByTag(
                     DynamicGridSizeFragment.DYNAMIC_GRID_SIZE_FRAGMENT);
             if (gridFragment != null) {
-                mDynamicGridSizeFragment.setSize();
+                ((DynamicGridSizeFragment) gridFragment).setSize();
                 unlockScreenOrientation(true);
             }
             else {
