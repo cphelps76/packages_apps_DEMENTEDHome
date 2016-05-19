@@ -3,6 +3,7 @@
     <bool name="preferences_interface_homescreen_search_default">true</bool>
     <bool name="preferences_interface_homescreen_scrolling_wallpaper_scroll_default">false</bool>
     <bool name="preferences_interface_homescreen_hide_icon_labels_default">false</bool>
+    <bool name="preferences_interface_homescreen_hide_folder_background">true</bool>
     <bool name="preferences_interface_drawer_hide_icon_labels_default">true</bool>
     <bool name="preferences_interface_drawer_compact_default">false</bool>
     <bool name="preferences_interface_drawer_dark_default">true</bool>

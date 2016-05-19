@@ -26,6 +26,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
 import android.graphics.Rect;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Looper;
 import android.os.Parcelable;
@@ -44,6 +45,7 @@ import android.widget.TextView;
 
 import com.android.cphelps76.DropTarget.DragObject;
 import com.android.cphelps76.FolderInfo.FolderListener;
+import com.android.cphelps76.settings.SettingsProvider;
 import com.android.cphelps76.util.Thunk;
 
 import java.util.ArrayList;
@@ -111,6 +113,8 @@ public class FolderIcon extends FrameLayout implements FolderListener {
 
     private float mSlop;
 
+    private static Context mContext;
+
     private PreviewItemDrawingParams mParams = new PreviewItemDrawingParams(0, 0, 0, 0);
     @Thunk PreviewItemDrawingParams mAnimParams = new PreviewItemDrawingParams(0, 0, 0, 0);
     @Thunk ArrayList<ShortcutInfo> mHiddenItems = new ArrayList<ShortcutInfo>();
@@ -132,6 +136,7 @@ public class FolderIcon extends FrameLayout implements FolderListener {
         mLongPressHelper = new CheckLongPressHelper(this);
         mStylusEventHelper = new StylusEventHelper(this);
         setAccessibilityDelegate(LauncherAppState.getInstance().getAccessibilityDelegate());
+        mContext = getContext();
     }
 
     public boolean isDropEnabled() {
@@ -167,6 +172,16 @@ public class FolderIcon extends FrameLayout implements FolderListener {
         lp.width = grid.iconSizePx;
         lp.height = grid.iconSizePx;
         icon.mPreviewBackground.setLayoutParams(lp);
+
+        boolean hideFolderBackground = SettingsProvider.getBoolean(mContext,
+                SettingsProvider.SETTINGS_UI_HIDE_FOLDER_BACKGROUND,
+                R.bool.preferences_interface_homescreen_hide_folder_background);
+
+        if (!hideFolderBackground) {
+            icon.mPreviewBackground.setBackgroundDrawable(mContext.getResources().getDrawable(R.drawable.folder_bg));
+        } else {
+            icon.mPreviewBackground.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        }
 
         icon.setTag(folderInfo);
         icon.setOnClickListener(launcher);

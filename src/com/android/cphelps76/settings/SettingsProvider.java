@@ -20,7 +20,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 public final class SettingsProvider {
-    public static final String SETTINGS_KEY = "trebuchet_preferences";
+    public static final String SETTINGS_KEY = "demented_home_preferences";
 
     public static final String SETTINGS_UI_HOMESCREEN_DEFAULT_SCREEN_ID = "ui_homescreen_default_screen_id";
     public static final String SETTINGS_UI_HOMESCREEN_SEARCH = "ui_homescreen_search";
@@ -39,6 +39,7 @@ public final class SettingsProvider {
     public static final String SETTINGS_UI_DRAWER_SEARCH = "ui_drawer_search";
     public static final String SETTINGS_UI_GENERAL_ICONS_LARGE = "ui_general_icons_large";
     public static final String SETTINGS_UI_ALLOW_ROTATION = "ui_allow_rotation";
+    public static final String SETTINGS_UI_HIDE_FOLDER_BACKGROUND = "ui_hide_folder_background";
 
     public static SharedPreferences get(Context context) {
         return context.getSharedPreferences(SETTINGS_KEY, Context.MODE_PRIVATE);

@@ -35,6 +35,7 @@ import com.android.cphelps76.stats.internal.db.DatabaseHelper;
 import com.android.cphelps76.stats.internal.model.CountAction;
 import com.android.cphelps76.stats.internal.model.CountOriginByPackageAction;
 import com.android.cphelps76.stats.internal.model.ITrackingAction;
+import com.android.cphelps76.stats.internal.model.RemoteFolderAction;
 import com.android.cphelps76.stats.internal.model.TrackingEvent;
 import com.android.cphelps76.stats.util.Logger;
 

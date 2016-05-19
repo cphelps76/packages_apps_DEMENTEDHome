@@ -28,6 +28,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
 import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
@@ -181,6 +184,7 @@ public class Folder extends LinearLayout implements DragSource, View.OnClickList
     // Folder scrolling
     private int mScrollAreaOffset;
 
+    private static Context mContext;
     private Handler mHandler;
 
     @Thunk int mScrollHintDir = DragController.SCROLL_NONE;
@@ -196,6 +200,7 @@ public class Folder extends LinearLayout implements DragSource, View.OnClickList
         super(context, attrs);
         setAlwaysDrawnWithCacheEnabled(false);
         mHandler = new Handler();
+        mContext = context;
         mInputMethodManager = (InputMethodManager)
                 getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
 
@@ -534,7 +539,16 @@ public class Folder extends LinearLayout implements DragSource, View.OnClickList
      */
     @SuppressLint("InflateParams")
     static Folder fromXml(Launcher launcher, ViewGroup root) {
-        return (Folder) launcher.getLayoutInflater().inflate(R.layout.user_folder, root, false);
+        Folder folderView = (Folder) launcher.getLayoutInflater().inflate(R.layout.user_folder, root, false);
+        boolean hideFolderBackground = SettingsProvider.getBoolean(mContext,
+                SettingsProvider.SETTINGS_UI_HIDE_FOLDER_BACKGROUND,
+                R.bool.preferences_interface_homescreen_hide_folder_background);
+        if (!hideFolderBackground) {
+            folderView.setBackgroundDrawable(mContext.getResources().getDrawable(R.drawable.folder_bg));
+        } else {
+            folderView.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        }
+        return folderView;
     }
 
     /**

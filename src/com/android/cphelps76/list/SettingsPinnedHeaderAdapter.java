@@ -128,6 +128,12 @@ public class SettingsPinnedHeaderAdapter extends PinnedHeaderListAdapter {
                         break;
                     case 5:
                         current = SettingsProvider.getBoolean(mContext,
+                                SettingsProvider.SETTINGS_UI_HIDE_FOLDER_BACKGROUND,
+                                R.bool.preferences_interface_homescreen_hide_folder_background);
+                        setSettingSwitch(stateView, settingSwitch, current);
+                        break;
+                    case 6:
+                        current = SettingsProvider.getBoolean(mContext,
                                 SettingsProvider.SETTINGS_UI_HOMESCREEN_REMOTE_FOLDER,
                                 R.bool.preferences_interface_homescreen_remote_folder_default);
                         setSettingSwitch(stateView, settingSwitch, current);
@@ -296,6 +302,13 @@ public class SettingsPinnedHeaderAdapter extends PinnedHeaderListAdapter {
 
                             break;
                         case 5:
+                            onSettingsBooleanChanged(v,
+                                    SettingsProvider.SETTINGS_UI_HIDE_FOLDER_BACKGROUND,
+                                    R.bool.preferences_interface_homescreen_hide_folder_background,
+                                    false);
+                            mLauncher.reloadLauncher(false, false);
+                            break;
+                        case 6:
                             onSettingsBooleanChanged(v,
                                     SettingsProvider.SETTINGS_UI_HOMESCREEN_REMOTE_FOLDER,
                                     R.bool.preferences_interface_homescreen_remote_folder_default,
