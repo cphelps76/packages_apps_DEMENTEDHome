@@ -386,6 +386,11 @@ public class SettingsPinnedHeaderAdapter extends PinnedHeaderListAdapter {
                                     OverviewSettingsPanel.ANDROID_PROTECTED_APPS);
                             mLauncher.startActivity(intent);
                             break;
+                        case 2:
+                            mLauncher.checkPermissionsAndExportDBFile();
+                            mLauncher.emailExportedFile();
+                            break;
+
                     }
             }
 
